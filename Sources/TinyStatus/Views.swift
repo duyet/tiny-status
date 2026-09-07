@@ -159,6 +159,73 @@ func regionIcon(_ title: String) -> String {
     return "app"
 }
 
+func gitlabImage() -> NSImage? {
+    NSImage(named: "GitLab")
+        ?? Bundle.main.url(forResource: "GitLab", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+}
+
+struct BrandIcon: View {
+    var title: String
+    var body: some View {
+        Group {
+            if title.lowercased().contains("gitlab"), let img = gitlabImage() {
+                Image(nsImage: img)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: regionIcon(title))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .frame(width: 20, height: 20)
+    }
+}
+
+func regionKey(_ title: String) -> String {
+    let head = title.split(separator: " ").first.map(String.init)?.uppercased() ?? title.uppercased()
+    if ["SG", "EU", "ZA", "US", "UK"].contains(head) { return head }
+    return "Other"
+}
+
+func envLabel(_ title: String) -> String {
+    let rest = title.split(separator: " ").dropFirst().joined(separator: " ")
+    return rest.isEmpty ? title : rest
+}
+
+func envRank(_ title: String) -> Int {
+    let t = title.lowercased()
+    if t.contains("dev") { return 0 }
+    if t.contains("staging") { return 1 }
+    if t.contains("prod") { return 2 }
+    return 3
+}
+
+struct RegionGroup: Identifiable {
+    var id: String { key }
+    var key: String
+    var items: [DeployRow]
+}
+
+func regionGroups(_ deploys: [DeployRow]) -> [RegionGroup] {
+    var map: [String: [DeployRow]] = [:]
+    for d in deploys {
+        map[regionKey(d.title), default: []].append(d)
+    }
+    for k in map.keys {
+        map[k]?.sort { envRank($0.title) < envRank($1.title) }
+    }
+    let order = ["SG", "EU", "ZA"]
+    var out: [RegionGroup] = []
+    for k in order where map[k]?.isEmpty == false {
+        out.append(RegionGroup(key: k, items: map[k]!))
+    }
+    for k in map.keys.sorted() where !order.contains(k) {
+        out.append(RegionGroup(key: k, items: map[k]!))
+    }
+    return out
+}
+
 func checkIcon(_ name: String) -> String {
     let n = name.lowercased()
     if n.contains("data") || n.contains("postgres") { return "cylinder.split.1x2" }
@@ -278,9 +345,7 @@ struct Panel: View {
                         Card {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack(spacing: 8) {
-                                    Image(systemName: regionIcon(row.title))
-                                        .foregroundStyle(.tint)
-                                        .frame(width: 18)
+                                    BrandIcon(title: row.title)
                                     Text(row.title).font(.subheadline.weight(.semibold))
                                     Spacer(minLength: 4)
                                     Mark(ok: row.up && !row.busy)
@@ -334,25 +399,19 @@ struct Panel: View {
                             }
                         }
                     }
-                    ForEach(store.deploys) { d in
-                        Card {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 8) {
-                                    Image(systemName: regionIcon(d.title))
-                                        .foregroundStyle(.tint)
-                                        .frame(width: 18)
-                                    Text(d.title).font(.subheadline.weight(.semibold))
-                                    CheckDots(checks: d.checks)
-                                    Spacer(minLength: 4)
-                                    Spark(values: d.spark)
-                                    Mark(ok: d.up, warn: d.health == "degraded")
-                                    if let url = d.openUrl {
-                                        IconBtn(system: "arrow.up.right.square", help: "Open health") {
-                                            store.openURL(url)
-                                        }
-                                    }
+                    ForEach(regionGroups(store.deploys)) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label(group.key, systemImage: regionIcon(group.key))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.top, 4)
+                            LazyVGrid(
+                                columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                                spacing: 8
+                            ) {
+                                ForEach(group.items) { d in
+                                    DeployCard(d: d)
                                 }
-                                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
                             }
                         }
                     }
@@ -378,6 +437,34 @@ struct Panel: View {
             .background(.bar)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 360, minHeight: 420)
+        .frame(minWidth: 560, minHeight: 480)
+    }
+}
+
+struct DeployCard: View {
+    var d: DeployRow
+    @ObservedObject var store = Store.shared
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
+                        .foregroundStyle(.tint)
+                        .frame(width: 14)
+                    Text(envLabel(d.title))
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 2)
+                    Spark(values: d.spark)
+                    Mark(ok: d.up, warn: d.health == "degraded")
+                    if let url = d.openUrl {
+                        IconBtn(system: "arrow.up.right.square", help: "Open health") {
+                            store.openURL(url)
+                        }
+                    }
+                }
+                CheckDots(checks: d.checks)
+                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
+            }
+        }
     }
 }

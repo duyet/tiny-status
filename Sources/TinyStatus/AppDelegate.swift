@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = Panel(store: Store.shared)
         let hosting = NSHostingView(rootView: root)
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.isOpaque = true
         w.backgroundColor = .windowBackgroundColor
         w.contentView = hosting
-        w.setContentSize(NSSize(width: 420, height: 680))
+        w.setContentSize(NSSize(width: 640, height: 720))
         w.center()
         w.makeKeyAndOrderFront(nil)
         mainWindow = w

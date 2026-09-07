@@ -14,6 +14,7 @@ app:
 	cp Info.plist $(APP)/Contents/Info.plist
 	mkdir -p $(APP)/Contents/Resources
 	cp Resources/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
+	cp Resources/GitLab.png $(APP)/Contents/Resources/GitLab.png
 
 build: app
 
