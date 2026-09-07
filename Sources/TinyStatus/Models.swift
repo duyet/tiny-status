@@ -23,6 +23,7 @@ struct Config: Codable {
     var pollSeconds: Double?
     var groupBy: String?
     var groups: [String]?
+    var order: [String]?
     var alerts: Alerts?
     var backup: Backup?
     var tunnels: [Tunnel]?

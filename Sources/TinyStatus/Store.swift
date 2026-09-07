@@ -129,7 +129,56 @@ final class Store: ObservableObject {
         {
             if seen.insert(c.id).inserted { out.append(c) }
         }
+        if let order = cfg.order, !order.isEmpty {
+            out.sort {
+                let a = order.firstIndex(of: $0.id) ?? Int.max
+                let b = order.firstIndex(of: $1.id) ?? Int.max
+                if a != b { return a < b }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+        }
         return out
+    }
+
+    func reorderSiblings(_ orderedIds: [String]) {
+        guard !orderedIds.isEmpty else { return }
+        var all = allChecks().map(\.id)
+        let set = Set(orderedIds)
+        var q = orderedIds.filter { all.contains($0) }
+        all = all.map { set.contains($0) ? q.removeFirst() : $0 }
+        cfg.order = all
+        persistOrder(all)
+        let tmap = Dictionary(uniqueKeysWithValues: tunnels.map { ($0.id, $0) })
+        let dmap = Dictionary(uniqueKeysWithValues: deploys.map { ($0.id, $0) })
+        let checks = allChecks()
+        tunnels = checks.filter { $0.kind == .tcp }.compactMap { tmap[$0.id] }
+        deploys = checks.filter { $0.kind != .tcp }.compactMap { dmap[$0.id] }
+    }
+
+    func reorderGroups(_ names: [String]) {
+        cfg.groups = names
+        persistGroups(names)
+    }
+
+    private func persistOrder(_ ids: [String]) {
+        patchConfig { $0["order"] = ids }
+    }
+
+    private func persistGroups(_ names: [String]) {
+        patchConfig { $0["groups"] = names }
+    }
+
+    private func patchConfig(_ edit: (inout [String: Any]) -> Void) {
+        var root: [String: Any] = [:]
+        if let data = try? Data(contentsOf: ConfigLoader.userURL),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            root = obj
+        }
+        edit(&root)
+        guard let out = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? out.write(to: ConfigLoader.userURL, options: .atomic)
+        cfgStamp = ConfigLoader.mtime()
     }
 
     func load() {

@@ -74,6 +74,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private var seededGroups = false
     private var fitting = false
     private var userResized = false
+    private var dragging = false
     private let table = NSOutlineView()
     private let empty = NSTextField(wrappingLabelWithString: "No checks yet. Choose TinyStatus → Import checks…")
 
@@ -96,6 +97,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.usesAlternatingRowBackgroundColors = true
         table.allowsColumnReordering = true
         table.allowsColumnResizing = true
+        table.registerForDraggedTypes([.string])
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
+        table.draggingDestinationFeedbackStyle = .gap
         table.allowsEmptySelection = true
         table.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         table.gridStyleMask = []
@@ -106,8 +110,8 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.action = #selector(clicked)
         table.doubleAction = #selector(openRow)
         table.target = self
-        table.autosaveName = "TinyStatus.checks.v2"
-        table.autosaveTableColumns = false
+        table.autosaveName = "TinyStatus.checks.v3"
+        table.autosaveTableColumns = true
 
         addCol(.status, 32, min: 28, max: 36, flex: false)
         addCol(.name, 180, min: 96, max: 520, flex: true)
@@ -121,9 +125,6 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.outlineTableColumn = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.name.rawValue))
         applyHiddenColumns()
         table.headerView?.menu = columnMenu()
-        if table.sortDescriptors.isEmpty {
-            table.sortDescriptors = [NSSortDescriptor(key: Col.name.rawValue, ascending: true)]
-        }
         scroll.documentView = table
 
         empty.font = .systemFont(ofSize: 13)
@@ -432,6 +433,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     @objc private func clicked() {
+        if dragging { return }
         let i = table.clickedRow
         guard i >= 0, let n = table.item(atRow: i) as? Node, !n.children.isEmpty else { return }
         if let ev = NSApp.currentEvent {
@@ -467,6 +469,62 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
         !((item as? Node)?.children.isEmpty ?? true)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+        guard let n = item as? Node, n.kind != "info", n.kind != "check" else { return nil }
+        dragging = true
+        let p = NSPasteboardItem()
+        p.setString(n.id, forType: .string)
+        return p
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        draggingSession session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        dragging = false
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        validateDrop info: NSDraggingInfo,
+        proposedItem item: Any?,
+        proposedChildIndex index: Int
+    ) -> NSDragOperation {
+        if index == NSOutlineViewDropOnItemIndex { return [] }
+        if let n = item as? Node, n.kind != "group" { return [] }
+        return .move
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView,
+        acceptDrop info: NSDraggingInfo,
+        item: Any?,
+        childIndex index: Int
+    ) -> Bool {
+        guard let id = info.draggingPasteboard.string(forType: .string) else { return false }
+        let parent = item as? Node
+        let siblings = parent == nil
+            ? roots
+            : parent!.children.filter { $0.kind != "info" && $0.kind != "check" }
+        var ids = siblings.map(\.id)
+        guard let from = ids.firstIndex(of: id) else { return false }
+        var to = index
+        ids.remove(at: from)
+        if from < to { to -= 1 }
+        to = min(max(0, to), ids.count)
+        ids.insert(id, at: to)
+        table.sortDescriptors = []
+        if parent == nil, siblings.first?.kind == "group" {
+            store.reorderGroups(ids.map { $0.hasPrefix("g-") ? String($0.dropFirst(2)) : $0 })
+        } else {
+            store.reorderSiblings(ids)
+        }
+        dragging = false
+        return true
     }
 
     func outlineViewItemDidExpand(_ notification: Notification) {
