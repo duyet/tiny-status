@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 final class OutlineItem: NSObject {
-    enum Kind { case header, tunnel, deploy }
+    enum Kind { case overview, header, tunnel, deploy }
     let kind: Kind
     let id: String
     let title: String
@@ -16,57 +16,59 @@ final class OutlineItem: NSObject {
 }
 
 final class SidebarCell: NSTableCellView {
-    let pill = NSView()
     let iconView = NSImageView()
     let label = NSTextField(labelWithString: "")
+    let dot = NSView()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        pill.wantsLayer = true
-        pill.layer?.cornerRadius = 8
-        pill.translatesAutoresizingMaskIntoConstraints = false
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.imageScaling = .scaleProportionallyDown
         label.translatesAutoresizingMaskIntoConstraints = false
         label.lineBreakMode = .byTruncatingTail
         label.font = .systemFont(ofSize: 13, weight: .regular)
-        addSubview(pill)
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3.5
+        dot.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconView)
         addSubview(label)
+        addSubview(dot)
         imageView = iconView
         textField = label
         NSLayoutConstraint.activate([
-            pill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            pill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            pill.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-            pill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-            iconView.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 10),
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 16),
-            iconView.heightAnchor.constraint(equalToConstant: 16),
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 8),
-            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -10),
+            iconView.widthAnchor.constraint(equalToConstant: 14),
+            iconView.heightAnchor.constraint(equalToConstant: 14),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.trailingAnchor.constraint(equalTo: dot.leadingAnchor, constant: -6),
+            dot.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 7),
+            dot.heightAnchor.constraint(equalToConstant: 7),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
 
-    func apply(title: String, image: NSImage?, selected: Bool, header: Bool) {
+    func apply(title: String, image: NSImage?, header: Bool, ok: Bool?) {
         label.stringValue = title
         iconView.image = image
         iconView.isHidden = header
         if header {
             label.font = .systemFont(ofSize: 11, weight: .medium)
-            label.textColor = .secondaryLabelColor
-            pill.layer?.backgroundColor = NSColor.clear.cgColor
+            label.textColor = .tertiaryLabelColor
+            dot.isHidden = true
         } else {
             label.font = .systemFont(ofSize: 13, weight: .regular)
             label.textColor = .labelColor
-            pill.layer?.backgroundColor = selected
-                ? NSColor.tertiaryLabelColor.withAlphaComponent(0.18).cgColor
-                : NSColor.clear.cgColor
+            if let ok {
+                dot.isHidden = false
+                dot.layer?.backgroundColor = (ok ? NSColor.systemGreen : NSColor.systemOrange).cgColor
+            } else {
+                dot.isHidden = true
+            }
         }
     }
 }
@@ -81,10 +83,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private let titleLabel = NSTextField(labelWithString: "Overview")
     private let subtitle = NSTextField(wrappingLabelWithString: "")
     private let chartBox = NSBox()
-    private let chartTitle = NSTextField(labelWithString: "Health history")
+    private let chartTitle = NSTextField(labelWithString: "Health")
     private let bars = BarChartView()
-    private let spark = SparkView()
     private let body = NSTextField(wrappingLabelWithString: "")
+    private var chartHeight: NSLayoutConstraint?
 
     override func loadView() {
         let split = NSSplitView()
@@ -111,66 +113,65 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         outline.delegate = self
         outline.dataSource = self
         outline.backgroundColor = .clear
-        outline.selectionHighlightStyle = .none
-        outline.rowHeight = 32
-        outline.indentationPerLevel = 8
-        outline.intercellSpacing = NSSize(width: 0, height: 2)
+        outline.style = .sourceList
+        outline.rowHeight = 28
+        outline.indentationPerLevel = 10
+        outline.intercellSpacing = NSSize(width: 0, height: 1)
         sideScroll.documentView = outline
         sideScroll.translatesAutoresizingMaskIntoConstraints = false
         sidebar.addSubview(search)
         sidebar.addSubview(sideScroll)
         NSLayoutConstraint.activate([
-            search.topAnchor.constraint(equalTo: sidebar.safeAreaLayoutGuide.topAnchor, constant: 12),
-            search.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
-            search.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
-            sideScroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 8),
+            search.topAnchor.constraint(equalTo: sidebar.safeAreaLayoutGuide.topAnchor, constant: 8),
+            search.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 10),
+            search.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -10),
+            sideScroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 6),
             sideScroll.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
             sideScroll.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
             sideScroll.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
         ])
 
         let detail = NSView()
-        detail.wantsLayer = true
-        titleLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        titleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
         subtitle.font = .systemFont(ofSize: 13)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.maximumNumberOfLines = 3
-        chartTitle.font = .systemFont(ofSize: 15, weight: .semibold)
+        subtitle.maximumNumberOfLines = 2
+        chartTitle.font = .systemFont(ofSize: 13, weight: .medium)
+        chartTitle.textColor = .secondaryLabelColor
         chartBox.boxType = .custom
-        chartBox.cornerRadius = 12
-        chartBox.borderWidth = 1
-        chartBox.borderColor = NSColor.separatorColor.withAlphaComponent(0.45)
-        chartBox.fillColor = .clear
-        chartBox.contentViewMargins = NSSize(width: 16, height: 14)
+        chartBox.cornerRadius = 10
+        chartBox.borderWidth = 0
+        chartBox.fillColor = NSColor.controlBackgroundColor
+        chartBox.contentViewMargins = NSSize(width: 16, height: 12)
         chartBox.translatesAutoresizingMaskIntoConstraints = false
-        let chartStack = NSStackView(views: [chartTitle, bars, spark])
+        let chartStack = NSStackView(views: [chartTitle, bars])
         chartStack.orientation = .vertical
         chartStack.alignment = .leading
-        chartStack.spacing = 10
+        chartStack.spacing = 8
         chartStack.translatesAutoresizingMaskIntoConstraints = false
         chartBox.contentView = chartStack
         bars.translatesAutoresizingMaskIntoConstraints = false
-        spark.translatesAutoresizingMaskIntoConstraints = false
         body.font = .systemFont(ofSize: 13)
         body.textColor = .secondaryLabelColor
         for v in [titleLabel, subtitle, chartBox, body] {
             v.translatesAutoresizingMaskIntoConstraints = false
             detail.addSubview(v)
         }
+        let ch = chartBox.heightAnchor.constraint(equalToConstant: 180)
+        chartHeight = ch
         NSLayoutConstraint.activate([
-            titleLabel.topAnchor.constraint(equalTo: detail.topAnchor, constant: 28),
-            titleLabel.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 32),
-            titleLabel.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -32),
-            subtitle.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 6),
+            titleLabel.topAnchor.constraint(equalTo: detail.safeAreaLayoutGuide.topAnchor, constant: 20),
+            titleLabel.leadingAnchor.constraint(equalTo: detail.leadingAnchor, constant: 28),
+            titleLabel.trailingAnchor.constraint(equalTo: detail.trailingAnchor, constant: -28),
+            subtitle.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
             subtitle.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitle.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            chartBox.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 20),
+            chartBox.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 18),
             chartBox.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             chartBox.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
-            chartBox.heightAnchor.constraint(equalToConstant: 220),
-            bars.heightAnchor.constraint(equalToConstant: 140),
-            spark.heightAnchor.constraint(equalToConstant: 36),
-            body.topAnchor.constraint(equalTo: chartBox.bottomAnchor, constant: 16),
+            ch,
+            bars.heightAnchor.constraint(equalToConstant: 132),
+            body.topAnchor.constraint(equalTo: chartBox.bottomAnchor, constant: 14),
             body.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
         ])
@@ -178,7 +179,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         split.addSubview(sidebar)
         split.addSubview(detail)
         view = split
-        DispatchQueue.main.async { split.setPosition(248, ofDividerAt: 0) }
+        DispatchQueue.main.async { split.setPosition(220, ofDividerAt: 0) }
     }
 
     override func viewDidLoad() {
@@ -196,7 +197,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     func reload() {
         let selected = (outline.item(atRow: outline.selectedRow) as? OutlineItem)?.id
-        var items: [OutlineItem] = []
+        var items: [OutlineItem] = [OutlineItem(kind: .overview, id: "overview", title: "Overview")]
         if !store.tunnels.isEmpty {
             let t = OutlineItem(kind: .header, id: "h-tun", title: "Tunnels")
             t.children = store.tunnels
@@ -215,14 +216,16 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         outline.reloadData()
         for r in roots { outline.expandItem(r) }
         if let selected {
-            for r in roots {
-                if let match = r.children.first(where: { $0.id == selected }) {
-                    outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: match)), byExtendingSelection: false)
-                    break
+            func select(_ item: OutlineItem) -> Bool {
+                if item.id == selected {
+                    outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: item)), byExtendingSelection: false)
+                    return true
                 }
+                return item.children.contains(where: select)
             }
-        } else if let first = roots.first?.children.first {
-            outline.selectRowIndexes(IndexSet(integer: outline.row(forItem: first)), byExtendingSelection: false)
+            for r in roots where select(r) { break }
+        } else {
+            outline.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         }
         showSelection()
         AppDelegate.instance?.setStatus(ok: store.allOK)
@@ -247,7 +250,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool { false }
 
     func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        (item as? OutlineItem)?.kind == .header ? 26 : 34
+        (item as? OutlineItem)?.kind == .header ? 22 : 28
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -255,70 +258,86 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         let id = NSUserInterfaceItemIdentifier("side")
         let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? SidebarCell) ?? SidebarCell()
         cell.identifier = id
-        let selected = outlineView.item(atRow: outlineView.selectedRow) as? OutlineItem === n
-        cell.apply(title: n.title, image: icon(for: n), selected: selected, header: n.kind == .header)
+        cell.apply(title: n.title, image: icon(for: n), header: n.kind == .header, ok: statusOK(n))
         cell.toolTip = tooltip(for: n)
         return cell
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        outline.reloadData()
         showSelection()
     }
 
     private func showSelection() {
         let n = outline.item(atRow: outline.selectedRow) as? OutlineItem
-        if n == nil || n?.kind == .header {
+        if n == nil || n?.kind == .overview || n?.kind == .header {
             titleLabel.stringValue = "Overview"
-            subtitle.stringValue = "Tunnels, health, and version drift across every configured app."
-            chartTitle.stringValue = "Fleet health"
-            spark.values = store.fleetSpark
+            subtitle.stringValue = "\(store.tunnelsUp)/\(store.tunnels.count) tunnels up · \(store.healthyDeploys)/\(store.deploys.count) apps healthy"
+            chartTitle.stringValue = "Healthy apps"
             bars.values = regionGroups(store.deploys).map { g in
                 let ok = g.items.filter { $0.health == "healthy" }.count
                 return (g.key, Double(ok), ok == g.items.count)
             }
-            body.stringValue = "Tunnels \(store.tunnelsUp) of \(store.tunnels.count) up. \(store.healthyDeploys) of \(store.deploys.count) apps healthy. \(store.degradedDeploys) degraded, \(store.downDeploys) down, \(store.driftDeploys) version drift."
+            setChartVisible(!bars.values.isEmpty)
+            var lines: [String] = []
+            if store.degradedDeploys > 0 { lines.append("\(store.degradedDeploys) degraded") }
+            if store.downDeploys > 0 { lines.append("\(store.downDeploys) down") }
+            if store.driftDeploys > 0 { lines.append("\(store.driftDeploys) version drift") }
+            body.stringValue = lines.joined(separator: "  ·  ")
             return
         }
         switch n!.kind {
-        case .header: break
+        case .overview, .header: break
         case .tunnel:
             guard let t = store.tunnels.first(where: { $0.id == n!.id }) else { return }
             titleLabel.stringValue = t.title
             subtitle.stringValue = t.up
-                ? "Listening on \(t.host):\(t.port ?? 0). Process \(t.process ?? "unknown"), pid \(t.pid ?? "—"), up \(t.elapsed ?? "—")."
-                : "Nothing is listening on \(t.host):\(t.port ?? 0). Start a forward or use Connect."
+                ? "Listening on \(t.host):\(t.port ?? 0)"
+                : "Nothing listening on \(t.host):\(t.port ?? 0)"
             chartTitle.stringValue = "Listen"
-            spark.values = [t.up ? 1 : 0, t.up ? 1 : 0]
             bars.values = [("port", t.up ? 1 : 0, t.up)]
-            body.stringValue = t.command ?? ""
+            setChartVisible(true)
+            var extra: [String] = []
+            if let p = t.process { extra.append(p) }
+            if let pid = t.pid { extra.append("pid \(pid)") }
+            if let e = t.elapsed { extra.append("up \(e)") }
+            body.stringValue = extra.joined(separator: "  ·  ")
         case .deploy:
             guard let d = store.deploys.first(where: { $0.id == n!.id }) else { return }
             titleLabel.stringValue = d.title
             let avg = d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—"
-            subtitle.stringValue = "\(d.health.capitalized). \(d.okCount) of \(d.checks.count) checks passing. Average latency \(avg)."
-            chartTitle.stringValue = "Check latency"
-            spark.values = d.spark
+            subtitle.stringValue = "\(d.health.capitalized) · \(d.okCount)/\(d.checks.count) checks · \(avg)"
+            chartTitle.stringValue = "Latency"
             bars.values = d.checks.map { ($0.name, $0.ms ?? 0, $0.status == "healthy") }
             if bars.values.isEmpty {
                 bars.values = [("health", DeployRow.healthScore(d.health), d.up)]
             }
-            var extra = "App \(d.liveVersion)  ·  deploy \(d.k8sVersion)  ·  pod \(d.k8sLiveVersion)"
-            if let u = d.uptime { extra += String(format: "  ·  uptime %.1fs", u) }
+            setChartVisible(true)
+            var extra = "app \(d.liveVersion)  ·  deploy \(d.k8sVersion)"
+            if let u = d.uptime { extra += String(format: "  ·  %.0fs", u) }
             body.stringValue = extra
         }
     }
 
-    private func icon(for n: OutlineItem) -> NSImage? {
-        if n.kind == .tunnel, n.title.lowercased().contains("gitlab") {
-            return NSImage(named: "GitLab")
-                ?? Bundle.main.url(forResource: "GitLab", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
+    private func setChartVisible(_ on: Bool) {
+        chartBox.isHidden = !on
+        chartHeight?.constant = on ? 180 : 0
+    }
+
+    private func statusOK(_ n: OutlineItem) -> Bool? {
+        switch n.kind {
+        case .overview, .header: return nil
+        case .tunnel: return store.tunnels.first(where: { $0.id == n.id })?.up
+        case .deploy: return store.deploys.first(where: { $0.id == n.id })?.health == "healthy"
         }
+    }
+
+    private func icon(for n: OutlineItem) -> NSImage? {
         let name: String
         switch n.kind {
         case .header: return nil
+        case .overview: name = "square.grid.2x2"
         case .tunnel: name = "network"
-        case .deploy: name = n.title.lowercased().contains("prod") ? "server.rack" : "hammer"
+        case .deploy: name = "circle"
         }
         let img = NSImage(systemSymbolName: name, accessibilityDescription: n.title)
         img?.isTemplate = true
@@ -327,9 +346,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     private func tooltip(for n: OutlineItem) -> String {
         switch n.kind {
+        case .overview: return "All checks"
         case .header: return n.title
-        case .tunnel: return "TCP tunnel"
-        case .deploy: return "App health"
+        case .tunnel: return "TCP"
+        case .deploy: return "HTTP"
         }
     }
 }
