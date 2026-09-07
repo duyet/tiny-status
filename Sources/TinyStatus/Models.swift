@@ -108,6 +108,14 @@ struct DeployRow: Identifiable {
     var spark: [Double] = []
     var uptime: Double? = nil
     var up: Bool { health == "healthy" }
+
+    static func healthScore(_ health: String) -> Double {
+        switch health {
+        case "healthy": 1
+        case "degraded": 0.5
+        default: 0
+        }
+    }
     var okCount: Int { checks.filter { $0.status == "healthy" }.count }
     var avgMs: Double? {
         let xs = checks.compactMap(\.ms)

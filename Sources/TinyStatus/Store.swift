@@ -76,7 +76,7 @@ final class Store: ObservableObject {
     }
     var fleetSpark: [Double] {
         let n = deploys.map(\.spark.count).max() ?? 0
-        guard n > 1 else { return deploys.map { Spark.score($0.health) } }
+        guard n > 1 else { return deploys.map { DeployRow.healthScore($0.health) } }
         return (0..<n).map { i in
             let xs = deploys.compactMap { $0.spark.indices.contains(i) ? $0.spark[i] : nil }
             guard !xs.isEmpty else { return 0 }
@@ -202,7 +202,7 @@ final class Store: ObservableObject {
                 )
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
-                s.append(Spark.score(row.health))
+                s.append(DeployRow.healthScore(row.health))
                 if s.count > 24 { s = Array(s.suffix(24)) }
                 row.spark = s
             }

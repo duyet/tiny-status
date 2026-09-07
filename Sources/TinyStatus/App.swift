@@ -1,19 +1,12 @@
 import AppKit
-import SwiftUI
 
 @main
-struct TinyStatusApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        MenuBarExtra {
-            Panel(store: Store.shared)
-        } label: {
-            BarLabel()
-        }
-        .menuBarExtraStyle(.window)
-        Settings {
-            ConfigWindow(store: Store.shared)
-        }
+enum TinyStatusMain {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        app.run()
     }
 }
