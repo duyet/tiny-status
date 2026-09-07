@@ -276,26 +276,60 @@ struct Panel: View {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(store.tunnels) { row in
                         Card {
-                            HStack(spacing: 8) {
-                                Image(systemName: regionIcon(row.title))
-                                    .foregroundStyle(.tint)
-                                    .frame(width: 18)
-                                VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: regionIcon(row.title))
+                                        .foregroundStyle(.tint)
+                                        .frame(width: 18)
                                     Text(row.title).font(.subheadline.weight(.semibold))
-                                    Text(row.busy ? "…" : row.up ? "Connected" : "Disconnected")
+                                    Spacer(minLength: 4)
+                                    Mark(ok: row.up && !row.busy)
+                                    if row.up {
+                                        if row.canStop {
+                                            IconBtn(system: "pause.circle", help: "Disconnect") {
+                                                store.runTunnel(row.id, kind: .stop)
+                                            }
+                                        }
+                                        if row.canOpen {
+                                            IconBtn(system: "safari", help: "Open") {
+                                                store.runTunnel(row.id, kind: .open)
+                                            }
+                                        }
+                                    } else if row.canStart {
+                                        IconBtn(system: "link", help: "Connect") {
+                                            store.runTunnel(row.id, kind: .start)
+                                        }
+                                    }
+                                }
+                                HStack(spacing: 6) {
+                                    Image(systemName: "network").foregroundStyle(.secondary).imageScale(.small)
+                                    Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
+                                        .font(.caption.monospaced())
+                                    if row.up {
+                                        Text("listening").font(.caption2).foregroundStyle(.green)
+                                    } else {
+                                        Text("nothing listening").font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                if row.up {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "terminal").foregroundStyle(.secondary).imageScale(.small)
+                                        Text(row.process ?? "process")
+                                        if let pid = row.pid { Text("pid \(pid)").foregroundStyle(.secondary) }
+                                        if let e = row.elapsed { Text("up \(e)").foregroundStyle(.secondary) }
+                                    }
+                                    .font(.caption2)
+                                    if let cmd = row.command {
+                                        Text(cmd)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                            .textSelection(.enabled)
+                                    }
+                                } else {
+                                    Text("Start a local forward to this port, or tap Connect if a start command is configured.")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 4)
-                                Mark(ok: row.up && !row.busy)
-                                IconBtn(system: "link", help: "Connect") {
-                                    store.runTunnel(row.id, kind: .start)
-                                }
-                                IconBtn(system: "pause.circle", help: "Disconnect") {
-                                    store.runTunnel(row.id, kind: .stop)
-                                }
-                                IconBtn(system: "safari", help: "Open") {
-                                    store.runTunnel(row.id, kind: .open)
                                 }
                             }
                         }

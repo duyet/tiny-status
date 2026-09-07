@@ -120,34 +120,45 @@ final class Store: ObservableObject {
         let dep = cfg.deployments ?? []
         let busyNow = busy
         Task.detached {
-            var ups: [String: Bool] = [:]
-            await withTaskGroup(of: (String, Bool).self) { g in
+            var infos: [String: TunnelInfo] = [:]
+            await withTaskGroup(of: (String, TunnelInfo).self) { g in
                 for t in tun where !busyNow.contains(t.id) {
                     g.addTask { (t.id, Probe.tunnel(t)) }
                 }
-                for await x in g { ups[x.0] = x.1 }
+                for await x in g { infos[x.0] = x.1 }
             }
             var drows: [String: DeployRow] = [:]
             await withTaskGroup(of: DeployRow.self) { g in
                 for d in dep { g.addTask { Probe.deployment(d) } }
                 for await r in g { drows[r.id] = r }
             }
-            let u = ups
+            let u = infos
             let d = drows
-            await MainActor.run { self.apply(ups: u, deploys: d) }
+            await MainActor.run { self.apply(tunnels: u, deploys: d) }
         }
     }
 
-    private func apply(ups: [String: Bool], deploys: [String: DeployRow]) {
+    private func apply(tunnels infos: [String: TunnelInfo], deploys: [String: DeployRow]) {
+        let prevT = Dictionary(uniqueKeysWithValues: self.tunnels.map { ($0.id, $0) })
         tunnels = (cfg.tunnels ?? []).map { t in
-            TunnelRow(
+            let old = self.tunnels.first { $0.id == t.id }
+            let info = infos[t.id]
+            return TunnelRow(
                 id: t.id,
                 title: t.title,
-                up: ups[t.id] ?? self.tunnels.first { $0.id == t.id }?.up ?? false,
-                busy: busy.contains(t.id)
+                up: info?.up ?? old?.up ?? false,
+                busy: busy.contains(t.id),
+                host: info?.host ?? t.probeHost ?? "127.0.0.1",
+                port: info?.port ?? t.probePort,
+                pid: info == nil ? old?.pid : info?.pid,
+                process: info == nil ? old?.process : info?.process,
+                elapsed: info == nil ? old?.elapsed : info?.elapsed,
+                command: info == nil ? old?.command : info?.command,
+                canStart: t.start != nil,
+                canStop: t.stop != nil,
+                canOpen: t.open != nil
             )
         }
-        let prevT = Dictionary(uniqueKeysWithValues: tunnels.map { ($0.id, $0) })
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
         self.deploys = (cfg.deployments ?? []).map { d in
             var row = deploys[d.id] ?? self.deploys.first { $0.id == d.id }

@@ -2,14 +2,49 @@ import Darwin
 import Foundation
 
 enum Probe {
-    static func tunnel(_ t: Tunnel) -> Bool {
+    static func tunnel(_ t: Tunnel) -> TunnelInfo {
+        let host = t.probeHost ?? "127.0.0.1"
+        var info = TunnelInfo(
+            up: false, host: host, port: t.probePort,
+            pid: nil, process: nil, elapsed: nil, command: nil
+        )
         if let port = t.probePort {
-            return TCP.canConnect(host: t.probeHost ?? "127.0.0.1", port: port)
+            info.up = TCP.canConnect(host: host, port: port)
+            if info.up { fillListen(&info, host: host, port: port) }
+            return info
         }
         if let status = t.status, !status.isEmpty {
-            return Shell.run(status, timeout: 12) == 0
+            info.up = Shell.run(status, timeout: 12) == 0
         }
-        return false
+        return info
+    }
+
+    private static func fillListen(_ info: inout TunnelInfo, host: String, port: Int) {
+        let lsof = Shell.capture(
+            ["/usr/sbin/lsof", "-nP", "-iTCP:\(port)", "-sTCP:LISTEN", "-F", "pc"],
+            timeout: 4
+        ).1
+        var pid: String?
+        var proc: String?
+        for line in lsof.split(whereSeparator: \.isNewline).map(String.init) {
+            if line.hasPrefix("p") { pid = String(line.dropFirst()) }
+            if line.hasPrefix("c") { proc = String(line.dropFirst()) }
+        }
+        info.pid = pid
+        info.process = proc
+        guard let pid else { return }
+        let ps = Shell.capture(
+            ["/bin/ps", "-p", pid, "-o", "etime=,command="],
+            timeout: 4
+        ).1.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ps.isEmpty else { return }
+        let parts = ps.split(maxSplits: 1, whereSeparator: \.isWhitespace).map(String.init)
+        if parts.count == 2 {
+            info.elapsed = parts[0]
+            info.command = parts[1]
+        } else {
+            info.command = ps
+        }
     }
 
     static func deployment(_ d: Deployment) -> DeployRow {

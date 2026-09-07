@@ -63,11 +63,30 @@ struct Deployment: Codable, Identifiable {
     var openUrl: String?
 }
 
+struct TunnelInfo: Sendable {
+    var up: Bool
+    var host: String
+    var port: Int?
+    var pid: String?
+    var process: String?
+    var elapsed: String?
+    var command: String?
+}
+
 struct TunnelRow: Identifiable {
     var id: String
     var title: String
     var up: Bool
     var busy: Bool
+    var host: String = "127.0.0.1"
+    var port: Int? = nil
+    var pid: String? = nil
+    var process: String? = nil
+    var elapsed: String? = nil
+    var command: String? = nil
+    var canStart = false
+    var canStop = false
+    var canOpen = false
 }
 
 struct CheckRow: Identifiable {
