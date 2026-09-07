@@ -50,6 +50,8 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private var bag = Set<AnyCancellable>()
     private var roots: [Node] = []
     private var filter = ""
+    private var expanded = Set<String>()
+    private var seededGroups = false
     private let table = NSOutlineView()
     private let empty = NSTextField(wrappingLabelWithString: "No checks yet. Choose TinyStatus → Import checks…")
 
@@ -76,8 +78,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.gridStyleMask = []
         table.intercellSpacing = NSSize(width: 6, height: 0)
-        table.indentationPerLevel = 14
+        table.indentationPerLevel = 16
         table.indentationMarkerFollowsCell = true
+        table.autoresizesOutlineColumn = false
         table.action = #selector(clicked)
         table.doubleAction = #selector(openRow)
         table.target = self
@@ -210,13 +213,6 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.sizeLastColumnToFit()
     }
 
-    private func expandedIds() -> Set<String> {
-        var s = store.expanded
-        for n in roots where table.isItemExpanded(n) { s.insert(n.id) }
-        store.expanded = s
-        return s
-    }
-
     private func matches(_ n: Node) -> Bool {
         if filter.isEmpty { return true }
         if n.title.lowercased().contains(filter)
@@ -285,6 +281,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         let checking = d.health == "…"
         let lat = d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—"
         var kids: [Node] = []
+        if let u = d.openUrl, !u.isEmpty {
+            kids.append(detail(d.id, "URL", u))
+        }
         for c in d.checks {
             let cw = c.status == "degraded"
             let cok = c.status == "healthy"
@@ -312,7 +311,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             id: d.id, title: d.title, kind: "HTTP",
             status: checking ? "Checking" : ok ? "Up" : warn ? "Degraded" : "Down",
             ok: ok, warn: warn, spark: d.spark, latency: lat,
-            target: d.openUrl ?? "", url: d.openUrl, leaf: kids.isEmpty,
+            target: d.openUrl ?? "", url: d.openUrl, leaf: false,
             tags: d.tags, group: d.group,
             children: kids
         )
@@ -335,10 +334,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         }
         if table.isItemExpanded(n) {
             table.collapseItem(n)
-            store.expanded.remove(n.id)
+            expanded.remove(n.id)
         } else {
             table.expandItem(n)
-            store.expanded.insert(n.id)
+            expanded.insert(n.id)
         }
     }
 
@@ -360,6 +359,18 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         !((item as? Node)?.children.isEmpty ?? true)
     }
 
+    func outlineView(_ outlineView: NSOutlineView, shouldShowOutlineCellForItem item: Any) -> Bool {
+        !((item as? Node)?.children.isEmpty ?? true)
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        if let n = notification.userInfo?["NSObject"] as? Node { expanded.insert(n.id) }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        if let n = notification.userInfo?["NSObject"] as? Node { expanded.remove(n.id) }
+    }
+
     func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         let keep = expandedIds()
         roots = sortNodes(roots)
@@ -368,16 +379,30 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     private func restoreExpanded(_ keep: Set<String>) {
-        let groupKept = keep.filter { $0.hasPrefix("g-") }
-        for n in roots {
-            if n.kind == "group", groupKept.isEmpty || groupKept.contains(n.id) || !filter.isEmpty {
-                table.expandItem(n)
+        func walk(_ nodes: [Node]) {
+            for n in nodes {
+                let seed = n.kind == "group" && !seededGroups
+                if keep.contains(n.id) || seed || (!filter.isEmpty && !n.children.isEmpty) {
+                    table.expandItem(n)
+                    walk(n.children)
+                }
             }
-            if keep.contains(n.id) || !filter.isEmpty {
-                table.expandItem(n, expandChildren: !filter.isEmpty)
-            }
-            for c in n.children where keep.contains(c.id) { table.expandItem(c) }
         }
+        walk(roots)
+        if !seededGroups { seededGroups = true }
+    }
+
+    private func expandedIds() -> Set<String> {
+        var s = expanded
+        func walk(_ nodes: [Node]) {
+            for n in nodes {
+                if table.isItemExpanded(n) { s.insert(n.id) }
+                walk(n.children)
+            }
+        }
+        walk(roots)
+        expanded = s
+        return s
     }
 
     private func sortNodes(_ nodes: [Node]) -> [Node] {
