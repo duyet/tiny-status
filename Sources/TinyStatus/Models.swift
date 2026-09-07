@@ -1,0 +1,90 @@
+import Foundation
+import SwiftUI
+
+struct Alerts: Codable {
+    var enabled: Bool?
+    var onDown: Bool?
+    var onRecover: Bool?
+    var onVersionDrift: Bool?
+    var cooldownSeconds: Double?
+}
+
+struct Backup: Codable {
+    var enabled: Bool?
+    var repo: String?
+    var file: String?
+    var remote: String?
+    var branch: String?
+    var remoteUrl: String?
+    var autoOnSave: Bool?
+}
+
+struct Config: Codable {
+    var pollSeconds: Double?
+    var alerts: Alerts?
+    var backup: Backup?
+    var tunnels: [Tunnel]?
+    var deployments: [Deployment]?
+}
+
+struct CachedDeploy: Codable {
+    var health: String
+    var liveVersion: String
+    var k8sVersion: String
+    var k8sLiveVersion: String
+    var spark: [Double]?
+}
+
+struct CacheFile: Codable {
+    var tunnels: [String: Bool]
+    var deploys: [String: CachedDeploy]
+    var lastAlert: [String: Date]
+    var lastChecked: Date?
+}
+
+struct Tunnel: Codable, Identifiable {
+    var id: String
+    var title: String
+    var status: [String]?
+    var start: [String]?
+    var stop: [String]?
+    var open: [String]?
+    /// External signal: TCP connect. Independent of who started the tunnel.
+    var probeHost: String?
+    var probePort: Int?
+}
+
+struct Deployment: Codable, Identifiable {
+    var id: String
+    var title: String
+    var healthUrl: String?
+    var k8s: [String]?
+    var k8sLive: [String]?
+    var openUrl: String?
+}
+
+struct TunnelRow: Identifiable {
+    var id: String
+    var title: String
+    var up: Bool
+    var busy: Bool
+}
+
+struct CheckRow: Identifiable {
+    var id: String { name }
+    var name: String
+    var status: String
+}
+
+struct DeployRow: Identifiable {
+    var id: String
+    var title: String
+    var health: String
+    var liveVersion: String
+    var k8sVersion: String
+    var k8sLiveVersion: String
+    var checks: [CheckRow]
+    var openUrl: String?
+    var spark: [Double] = []
+    var up: Bool { health == "healthy" }
+}

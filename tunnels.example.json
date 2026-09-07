@@ -1,0 +1,35 @@
+{
+  "pollSeconds": 30,
+  "alerts": {
+    "enabled": true,
+    "onDown": true,
+    "onRecover": true,
+    "onVersionDrift": true,
+    "cooldownSeconds": 300
+  },
+  "backup": {
+    "enabled": true,
+    "autoOnSave": false,
+    "repo": "{home}/.config/tiny-status/git-backup",
+    "file": "tunnels.json",
+    "remote": "origin",
+    "branch": "main",
+    "remoteUrl": ""
+  },
+  "tunnels": [
+    {
+      "id": "local",
+      "title": "Local",
+      "probeHost": "127.0.0.1",
+      "probePort": 8080
+    }
+  ],
+  "deployments": [
+    {
+      "id": "api",
+      "title": "API",
+      "healthUrl": "https://example.com/health",
+      "openUrl": "https://example.com/health"
+    }
+  ]
+}

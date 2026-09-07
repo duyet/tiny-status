@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>TinyStatus</string>
+  <key>CFBundleDisplayName</key>
+  <string>TinyStatus</string>
+  <key>CFBundleIdentifier</key>
+  <string>net.duyet.tiny-status</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.0</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleExecutable</key>
+  <string>TinyStatus</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>26.0</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>LSUIElement</key>
+  <false/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSUserNotificationAlertStyle</key>
+  <string>alert</string>
+</dict>
+</plist>
