@@ -81,18 +81,17 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.action = #selector(clicked)
         table.doubleAction = #selector(openRow)
         table.target = self
-        table.autosaveName = "TinyStatus.checks"
-        table.autosaveTableColumns = true
+        table.autosaveName = "TinyStatus.checks.v2"
+        table.autosaveTableColumns = false
 
-        addCol(.status, "", 28, min: 24, max: 36)
-        addCol(.name, "Check", 200, min: 140, max: 480)
-        addCol(.kind, "Type", 56, min: 48, max: 80)
-        addCol(.tags, "Tags", 120, min: 72, max: 240)
-        addCol(.history, "History", 160, min: 110, max: 280)
-        addCol(.latency, "Latency", 72, min: 60, max: 100)
-        addCol(.target, "Target", 260, min: 120, max: 2000)
+        addCol(.status, "", 32, min: 28, max: 36, flex: false)
+        addCol(.name, "Check", 160, min: 96, max: 420, flex: false)
+        addCol(.kind, "Type", 52, min: 44, max: 72, flex: false)
+        addCol(.tags, "Tags", 80, min: 56, max: 220, flex: false)
+        addCol(.history, "History", 148, min: 120, max: 200, flex: false)
+        addCol(.latency, "Latency", 64, min: 52, max: 88, flex: false)
+        addCol(.target, "Target", 240, min: 80, max: 4000, flex: true)
         table.outlineTableColumn = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.name.rawValue))
-        table.tableColumns.first?.resizingMask = [.userResizingMask]
         if table.sortDescriptors.isEmpty {
             table.sortDescriptors = [NSSortDescriptor(key: Col.name.rawValue, ascending: true)]
         }
@@ -116,13 +115,13 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         view = root
     }
 
-    private func addCol(_ id: Col, _ title: String, _ w: CGFloat, min: CGFloat, max: CGFloat) {
+    private func addCol(_ id: Col, _ title: String, _ w: CGFloat, min: CGFloat, max: CGFloat, flex: Bool) {
         let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id.rawValue))
         c.title = title
         c.width = w
         c.minWidth = min
         c.maxWidth = max
-        c.resizingMask = [.userResizingMask, .autoresizingMask]
+        c.resizingMask = flex ? [.userResizingMask, .autoresizingMask] : [.userResizingMask]
         c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
         table.addTableColumn(c)
     }
@@ -155,8 +154,60 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         empty.isHidden = !items.isEmpty
         table.reloadData()
         restoreExpanded(keep)
+        sizeColumnsToContent()
         view.window?.subtitle = items.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        table.sizeLastColumnToFit()
+    }
+
+    private func sizeColumnsToContent() {
+        let body = NSFont.systemFont(ofSize: 13)
+        let small = NSFont.systemFont(ofSize: 12)
+        let tagsFont = NSFont.systemFont(ofSize: 11)
+        let header = NSFont.systemFont(ofSize: 11, weight: .medium)
+        func textW(_ s: String, _ font: NSFont) -> CGFloat {
+            ceil((s as NSString).size(withAttributes: [.font: font]).width)
+        }
+        var nameW: CGFloat = textW("Check", header) + 24
+        var kindW: CGFloat = textW("Type", header) + 20
+        var tagsW: CGFloat = textW("Tags", header) + 20
+        var latW: CGFloat = textW("Latency", header) + 20
+        var hasTags = false
+        func walk(_ nodes: [Node], level: Int) {
+            for n in nodes {
+                nameW = max(nameW, 28 + CGFloat(level) * table.indentationPerLevel + 18 + textW(n.title, n.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : body) + 12)
+                if n.kind != "info" && n.kind != "group" {
+                    kindW = max(kindW, textW(n.kind, small) + 20)
+                }
+                if !n.tags.isEmpty, n.kind != "group" {
+                    hasTags = true
+                    tagsW = max(tagsW, textW(n.tags.joined(separator: "  "), tagsFont) + 20)
+                }
+                if !n.latency.isEmpty {
+                    latW = max(latW, textW(n.latency, .monospacedDigitSystemFont(ofSize: 12, weight: .regular)) + 20)
+                }
+                walk(n.children, level: level + 1)
+            }
+        }
+        walk(roots, level: 0)
+        func set(_ id: Col, _ w: CGFloat) {
+            guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)) else { return }
+            c.width = min(c.maxWidth, max(c.minWidth, w))
+        }
+        set(.status, 32)
+        set(.name, nameW)
+        set(.kind, kindW)
+        if let tagsCol = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.tags.rawValue)) {
+            tagsCol.isHidden = !hasTags
+            if hasTags { tagsCol.width = min(tagsCol.maxWidth, max(tagsCol.minWidth, tagsW)) }
+        }
+        set(.history, 148)
+        set(.latency, latW)
+        table.sizeLastColumnToFit()
     }
 
     private func expandedIds() -> Set<String> {
