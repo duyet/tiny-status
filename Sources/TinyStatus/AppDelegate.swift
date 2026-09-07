@@ -109,22 +109,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let s = Store.shared
         let m = NSMenu()
         m.autoenablesItems = false
-        let head = NSMenuItem.sectionHeader(
-            title: s.healthCheckTotal == 0 ? "No health checks yet" : s.healthCheckSummary
-        )
-        m.addItem(head)
+        let summary = s.healthCheckTotal == 0 ? "No health checks yet" : s.healthCheckSummary
+        m.addItem(NSMenuItem.sectionHeader(title: summary))
+
+        struct Row {
+            var group: String
+            var item: NSMenuItem
+        }
+        var rows: [Row] = []
         for t in s.tunnels {
-            m.addItem(statusRow(
+            let it = statusRow(
                 title: t.title,
+                symbol: t.title.lowercased().contains("gitlab") ? nil : "network",
+                asset: t.title.lowercased().contains("gitlab") ? "GitLab" : nil,
                 ok: t.up,
                 warn: false,
                 suffix: t.ms.map { String(format: "%.0f ms", $0) } ?? ""
-            ))
+            )
+            rows.append(Row(group: t.group, item: it))
         }
         for d in s.deploys {
             let extra = d.checks.isEmpty ? "" : "\(d.okCount)/\(d.checks.count)"
-            let row = statusRow(
+            let it = statusRow(
                 title: d.title,
+                symbol: "globe",
+                asset: nil,
                 ok: d.health == "healthy",
                 warn: d.health == "degraded",
                 suffix: extra
@@ -135,48 +144,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 for c in d.checks {
                     sub.addItem(statusRow(
                         title: c.name,
+                        symbol: serviceSymbol(c.name),
+                        asset: nil,
                         ok: c.status == "healthy",
                         warn: c.status == "degraded",
                         suffix: c.ms.map { String(format: "%.0f ms", $0) } ?? ""
                     ))
                 }
-                row.submenu = sub
+                it.submenu = sub
             }
-            m.addItem(row)
+            rows.append(Row(group: d.group, item: it))
         }
+        let pref = s.groupOrder
+        let names = pref.filter { g in rows.contains { $0.group == g } }
+            + Array(Set(rows.map(\.group)).subtracting(pref)).sorted()
+        for (i, g) in names.enumerated() {
+            let kids = rows.filter { $0.group == g }
+            guard !kids.isEmpty else { continue }
+            if names.count > 1 {
+                if i > 0 { m.addItem(.separator()) }
+                m.addItem(NSMenuItem.sectionHeader(title: g))
+            }
+            for k in kids { m.addItem(k.item) }
+        }
+
         m.addItem(.separator())
-        let open = NSMenuItem(title: "Open TinyStatus", action: #selector(showMain), keyEquivalent: "")
-        open.target = self
-        open.isEnabled = true
-        m.addItem(open)
-        let reload = NSMenuItem(title: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
-        reload.target = self
-        reload.isEnabled = true
-        m.addItem(reload)
-        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
-        settings.target = self
-        settings.isEnabled = true
-        m.addItem(settings)
+        m.addItem(actionRow("Open TinyStatus", "macwindow", #selector(showMain), ""))
+        m.addItem(actionRow("Reload", "arrow.clockwise", #selector(reload(_:)), "r"))
+        m.addItem(actionRow("Import checks…", "plus.circle", #selector(showImport), "i"))
+        m.addItem(actionRow("Settings…", "gearshape", #selector(showSettings), ","))
         m.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let quit = actionRow("Quit TinyStatus", "power", #selector(NSApplication.terminate(_:)), "q")
         quit.target = NSApp
-        quit.isEnabled = true
         m.addItem(quit)
         statusItem?.menu = m
     }
 
-    private func statusRow(title: String, ok: Bool, warn: Bool, suffix: String) -> NSMenuItem {
-        let label = suffix.isEmpty ? title : "\(title)    \(suffix)"
-        let item = NSMenuItem(title: label, action: #selector(showMain), keyEquivalent: "")
+    private func actionRow(_ title: String, _ symbol: String, _ sel: Selector, _ key: String) -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: sel, keyEquivalent: key)
+        i.target = self
+        i.isEnabled = true
+        i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        i.image?.isTemplate = true
+        return i
+    }
+
+    private func serviceSymbol(_ name: String) -> String {
+        let n = name.lowercased()
+        if n.contains("postgres") || n.contains("data") { return "cylinder.split.1x2" }
+        if n.contains("redis") || n.contains("cache") { return "bolt.fill" }
+        if n.contains("qdrant") || n.contains("vector") { return "square.stack.3d.up" }
+        if n.contains("click") { return "chart.bar.fill" }
+        if n.contains("openrouter") || n.contains("llm") { return "sparkles" }
+        if n.contains("api") { return "point.3.connected.trianglepath.dotted" }
+        if n.contains("migrat") { return "arrow.triangle.2.circlepath" }
+        if n.contains("cube") { return "cube.fill" }
+        return "circle.fill"
+    }
+
+    private func statusRow(
+        title: String, symbol: String?, asset: String?, ok: Bool, warn: Bool, suffix: String
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(showMain), keyEquivalent: "")
         item.target = self
         item.isEnabled = true
-        let name = warn ? "exclamationmark.circle.fill" : ok ? "checkmark.circle.fill" : "xmark.circle.fill"
         let color: NSColor = warn ? .systemOrange : ok ? .systemGreen : .systemRed
-        let img = NSImage(systemSymbolName: name, accessibilityDescription: title)
-        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
-        item.image = img?.withSymbolConfiguration(cfg)
-        item.image?.isTemplate = false
+        let suffixColor: NSColor = warn ? .systemOrange : ok ? .secondaryLabelColor : .systemRed
+        let text = NSMutableAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.menuFont(ofSize: 13),
+                .foregroundColor: NSColor.labelColor,
+            ]
+        )
+        if !suffix.isEmpty {
+            text.append(NSAttributedString(
+                string: "    \(suffix)",
+                attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                    .foregroundColor: suffixColor,
+                ]
+            ))
+        }
+        item.attributedTitle = text
+        if let asset,
+           let url = Bundle.main.url(forResource: asset, withExtension: "png"),
+           let img = NSImage(contentsOf: url)
+        {
+            img.size = NSSize(width: 16, height: 16)
+            item.image = img
+        } else if let symbol {
+            let img = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+            let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+                .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+            item.image = img?.withSymbolConfiguration(cfg)
+            item.image?.isTemplate = false
+        }
         return item
     }
 
