@@ -9,7 +9,9 @@ enum Probe {
             pid: nil, process: nil, elapsed: nil, command: nil
         )
         if let port = t.probePort {
-            info.up = TCP.canConnect(host: host, port: port)
+            let r = TCP.probe(host: host, port: port)
+            info.up = r.ok
+            info.ms = r.ms
             if info.up { fillListen(&info, host: host, port: port) }
             return info
         }
@@ -52,18 +54,27 @@ enum Probe {
         var health = "down"
         var checks: [CheckRow] = []
         var uptime: Double?
-        if let url = d.healthUrl, let json = HTTP.getJSON(url, timeout: 18) {
-            health = (json["status"] as? String) ?? "unknown"
-            live = (json["version"] as? String) ?? "—"
-            uptime = num(json["uptime_seconds"])
-            if let arr = json["checks"] as? [[String: Any]] {
-                checks = arr.map {
-                    CheckRow(
-                        name: ($0["service"] as? String) ?? "?",
-                        status: ($0["status"] as? String) ?? "?",
-                        ms: num($0["response_time_ms"])
-                    )
+        if let url = d.healthUrl {
+            let hit = HTTP.getJSON(url, timeout: 18)
+            if let json = hit.json {
+                health = (json["status"] as? String) ?? "unknown"
+                live = (json["version"] as? String) ?? "—"
+                uptime = num(json["uptime_seconds"])
+                if let arr = json["checks"] as? [[String: Any]] {
+                    checks = arr.map {
+                        CheckRow(
+                            name: ($0["service"] as? String) ?? ($0["name"] as? String) ?? "?",
+                            status: ($0["status"] as? String) ?? "?",
+                            ms: num($0["response_time_ms"]) ?? num($0["latency_ms"])
+                        )
+                    }
                 }
+                if checks.isEmpty {
+                    checks = [CheckRow(name: "http", status: health == "healthy" ? "healthy" : health, ms: hit.ms)]
+                }
+            } else {
+                health = "down"
+                checks = [CheckRow(name: "http", status: "unhealthy", ms: hit.ms)]
             }
         }
         let k8s = tag(Shell.output(d.k8s ?? [], timeout: 20))
@@ -119,12 +130,13 @@ enum Probe {
 }
 
 enum HTTP {
-    static func getJSON(_ url: String, timeout: TimeInterval) -> [String: Any]? {
-        guard let u = URL(string: url) else { return nil }
+    static func getJSON(_ url: String, timeout: TimeInterval) -> (json: [String: Any]?, ms: Double) {
+        guard let u = URL(string: url) else { return (nil, 0) }
         var req = URLRequest(url: u, timeoutInterval: timeout)
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         let sem = DispatchSemaphore(value: 0)
         var out: [String: Any]?
+        let t0 = CFAbsoluteTimeGetCurrent()
         URLSession.shared.dataTask(with: req) { data, _, _ in
             if let data,
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -134,11 +146,18 @@ enum HTTP {
             sem.signal()
         }.resume()
         _ = sem.wait(timeout: .now() + timeout + 1)
-        return out
+        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        return (out, ms)
     }
 }
 
 enum TCP {
+    static func probe(host: String, port: Int, timeoutSec: Double = 1.5) -> (ok: Bool, ms: Double) {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let ok = canConnect(host: host, port: port, timeoutSec: timeoutSec)
+        return (ok, (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+    }
+
     static func canConnect(host: String, port: Int, timeoutSec: Double = 1.5) -> Bool {
         var hints = addrinfo(
             ai_flags: AI_NUMERICHOST,

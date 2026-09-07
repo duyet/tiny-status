@@ -72,6 +72,7 @@ struct TunnelInfo: Sendable {
     var process: String?
     var elapsed: String?
     var command: String?
+    var ms: Double? = nil
 }
 
 struct TunnelRow: Identifiable {
@@ -89,6 +90,7 @@ struct TunnelRow: Identifiable {
     var canStop = false
     var canOpen = false
     var spark: [Double] = []
+    var ms: Double? = nil
 }
 
 struct CheckRow: Identifiable {
@@ -96,6 +98,7 @@ struct CheckRow: Identifiable {
     var name: String
     var status: String
     var ms: Double? = nil
+    var spark: [Double] = []
 }
 
 struct DeployRow: Identifiable {

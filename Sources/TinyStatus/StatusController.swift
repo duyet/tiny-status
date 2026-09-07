@@ -110,22 +110,21 @@ final class StatusController: NSViewController, NSTableViewDataSource, NSTableVi
         var all: [CheckListRow] = []
         for t in store.tunnels {
             let target = t.port.map { "\(t.host):\($0)" } ?? t.host
+            let lat = t.ms.map { String(format: "%.0f ms", $0) } ?? "—"
             all.append(CheckListRow(
                 id: t.id, title: t.title, kind: "TCP",
-                status: t.up ? "Up" : "Down", ok: t.up, warn: false,
-                spark: t.spark, latency: "—", target: target, url: nil
+                status: t.busy ? "Checking" : (t.up ? "Up" : "Down"),
+                ok: t.up, warn: false,
+                spark: t.spark, latency: lat, target: target, url: nil
             ))
         }
         for d in store.deploys {
-            let warn = d.health == "degraded"
-            let ok = d.health == "healthy"
-            let lat = d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—"
-            all.append(CheckListRow(
-                id: d.id, title: d.title, kind: "HTTP",
-                status: ok ? "Up" : warn ? "Degraded" : (d.health == "…" ? "Checking" : "Down"),
-                ok: ok, warn: warn, spark: d.spark, latency: lat,
-                target: d.openUrl ?? "", url: d.openUrl
-            ))
+            let kids = d.checks
+            if kids.isEmpty {
+                all.append(listRow(deploy: d, check: nil))
+            } else {
+                for c in kids { all.append(listRow(deploy: d, check: c)) }
+            }
         }
         if !filter.isEmpty {
             all = all.filter {
@@ -141,6 +140,27 @@ final class StatusController: NSViewController, NSTableViewDataSource, NSTableVi
         let up = all.filter(\.ok).count
         view.window?.subtitle = all.isEmpty ? "" : "\(up) of \(all.count) up · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
+    }
+
+    private func listRow(deploy d: DeployRow, check: CheckRow?) -> CheckListRow {
+        let c = check
+        let statusRaw = c?.status ?? d.health
+        let warn = statusRaw == "degraded"
+        let ok = statusRaw == "healthy"
+        let checking = d.health == "…" && c == nil
+        let lat = (c?.ms ?? d.avgMs).map { String(format: "%.0f ms", $0) } ?? "—"
+        let title = c == nil ? d.title : "\(d.title) · \(c!.name)"
+        return CheckListRow(
+            id: c == nil ? d.id : "\(d.id)/\(c!.name)",
+            title: title,
+            kind: "HTTP",
+            status: checking ? "Checking" : ok ? "Up" : warn ? "Degraded" : "Down",
+            ok: ok, warn: warn,
+            spark: c?.spark ?? d.spark,
+            latency: lat,
+            target: d.openUrl ?? "",
+            url: d.openUrl
+        )
     }
 
     @objc private func openRow() {

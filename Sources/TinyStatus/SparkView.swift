@@ -9,22 +9,18 @@ final class HeartbeatView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let n = slots
+        guard !values.isEmpty else { return }
+        let shown = Array(values.suffix(slots))
+        let n = shown.count
         let gap: CGFloat = 1.5
-        let w = max(2, (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n))
-        let h = bounds.height
-        let start = values.count - n
-        for i in 0..<n {
-            let idx = start + i
-            let x = CGFloat(i) * (w + gap)
-            let r = NSRect(x: x, y: 1, width: w, height: h - 2)
+        let w = max(2, min(4, (bounds.width - gap * CGFloat(max(n - 1, 0))) / CGFloat(max(n, 1))))
+        let total = CGFloat(n) * w + CGFloat(max(n - 1, 0)) * gap
+        let origin = max(0, bounds.width - total)
+        for (i, v) in shown.enumerated() {
+            let x = origin + CGFloat(i) * (w + gap)
+            let r = NSRect(x: x, y: 1, width: w, height: bounds.height - 2)
             let path = NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1)
-            if idx < 0 || idx >= values.count {
-                NSColor.quaternaryLabelColor.setFill()
-            } else {
-                let v = values[idx]
-                (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed).setFill()
-            }
+            (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed).setFill()
             path.fill()
         }
     }

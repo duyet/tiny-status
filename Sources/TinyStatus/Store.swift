@@ -211,7 +211,8 @@ final class Store: ObservableObject {
                 canStart: t.start != nil,
                 canStop: t.stop != nil,
                 canOpen: t.open != nil,
-                spark: spark
+                spark: spark,
+                ms: info == nil ? old?.ms : info?.ms
             )
         }
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
@@ -226,6 +227,15 @@ final class Store: ObservableObject {
                 s.append(DeployRow.healthScore(row.health))
                 if s.count > 40 { s = Array(s.suffix(40)) }
                 row.spark = s
+                let prevC = Dictionary(uniqueKeysWithValues: (prevD[d.id]?.checks ?? []).map { ($0.name, $0) })
+                row.checks = row.checks.map { c in
+                    var c = c
+                    var cs = prevC[c.name]?.spark ?? []
+                    cs.append(DeployRow.healthScore(c.status))
+                    if cs.count > 40 { cs = Array(cs.suffix(40)) }
+                    c.spark = cs
+                    return c
+                }
             }
             return row
         }
