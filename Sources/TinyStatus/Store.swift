@@ -54,6 +54,26 @@ final class Store: ObservableObject {
     }
 
     var barColor: Color { allOK ? .green : .red }
+
+    var tunnelsUp: Int { tunnels.filter(\.up).count }
+    var healthyDeploys: Int { deploys.filter { $0.health == "healthy" }.count }
+    var degradedDeploys: Int { deploys.filter { $0.health == "degraded" }.count }
+    var downDeploys: Int { deploys.filter { $0.health != "healthy" && $0.health != "degraded" && $0.health != "…" }.count }
+    var driftDeploys: Int {
+        deploys.filter {
+            $0.k8sVersion != "—" && $0.k8sLiveVersion != "—"
+                && ($0.k8sVersion != $0.k8sLiveVersion || ($0.liveVersion != "—" && $0.liveVersion != $0.k8sLiveVersion))
+        }.count
+    }
+    var fleetSpark: [Double] {
+        let n = deploys.map(\.spark.count).max() ?? 0
+        guard n > 1 else { return deploys.map { Spark.score($0.health) } }
+        return (0..<n).map { i in
+            let xs = deploys.compactMap { $0.spark.indices.contains(i) ? $0.spark[i] : nil }
+            guard !xs.isEmpty else { return 0 }
+            return xs.reduce(0, +) / Double(xs.count)
+        }
+    }
     private var cfg = Config()
     private var busy = Set<String>()
     private var timer: Timer?

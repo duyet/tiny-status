@@ -458,6 +458,75 @@ struct ConfigWindow: View {
     }
 }
 
+struct Overview: View {
+    @ObservedObject var store: Store
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Overview", systemImage: "square.grid.2x2.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(store.lastCheckedLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 6) {
+                MetricChip(
+                    icon: "network",
+                    title: "Tunnels",
+                    value: "\(store.tunnelsUp)/\(store.tunnels.count)",
+                    color: store.tunnelsUp == store.tunnels.count && !store.tunnels.isEmpty ? .green : Palette.gitlab
+                )
+                MetricChip(
+                    icon: "checkmark.seal.fill",
+                    title: "Healthy",
+                    value: "\(store.healthyDeploys)/\(store.deploys.count)",
+                    color: .green
+                )
+                MetricChip(
+                    icon: "exclamationmark.triangle.fill",
+                    title: "Degraded",
+                    value: "\(store.degradedDeploys)",
+                    color: store.degradedDeploys == 0 ? .green : .orange
+                )
+                MetricChip(
+                    icon: "xmark.octagon.fill",
+                    title: "Down",
+                    value: "\(store.downDeploys)",
+                    color: store.downDeploys == 0 ? .green : .red
+                )
+                MetricChip(
+                    icon: "arrow.left.arrow.right",
+                    title: "Drift",
+                    value: "\(store.driftDeploys)",
+                    color: store.driftDeploys == 0 ? .green : Palette.deploy
+                )
+            }
+            HStack(spacing: 8) {
+                ForEach(regionGroups(store.deploys)) { g in
+                    let ok = g.items.filter { $0.health == "healthy" }.count
+                    HStack(spacing: 4) {
+                        Circle().fill(Palette.region(g.key)).frame(width: 7, height: 7)
+                        Text(g.key).font(.caption2.weight(.semibold))
+                        Text("\(ok)/\(g.items.count)")
+                            .font(.caption2.monospaced())
+                    }
+                    .foregroundStyle(Palette.region(g.key))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Palette.region(g.key).opacity(0.12), in: Capsule())
+                    .help("\(g.key): \(ok) of \(g.items.count) healthy")
+                }
+                Spark(values: store.fleetSpark, wide: true)
+                    .help("Average health across all apps")
+            }
+        }
+        .padding(10)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
 struct Panel: View {
     @ObservedObject var store: Store
 
@@ -465,6 +534,7 @@ struct Panel: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
+                    Overview(store: store)
                     ForEach(store.tunnels) { row in
                         TunnelCard(row: row)
                     }
