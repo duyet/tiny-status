@@ -88,6 +88,7 @@ struct TunnelRow: Identifiable {
     var canStart = false
     var canStop = false
     var canOpen = false
+    var spark: [Double] = []
 }
 
 struct CheckRow: Identifiable {

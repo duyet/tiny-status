@@ -39,8 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let w = NSWindow(contentViewController: vc)
         w.title = "TinyStatus"
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        w.setContentSize(NSSize(width: 760, height: 500))
-        w.minSize = NSSize(width: 560, height: 360)
+        w.setContentSize(NSSize(width: 920, height: 480))
+        w.minSize = NSSize(width: 720, height: 320)
         w.toolbar = makeToolbar()
         w.toolbarStyle = .unified
         w.center()

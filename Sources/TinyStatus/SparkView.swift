@@ -1,5 +1,36 @@
 import AppKit
 
+/// Uptime Kuma–style heartbeat: one tick per poll.
+final class HeartbeatView: NSView {
+    var values: [Double] = [] { didSet { needsDisplay = true } }
+    var slots: Int = 32
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 148, height: 18) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let n = slots
+        let gap: CGFloat = 1.5
+        let w = max(2, (bounds.width - gap * CGFloat(n - 1)) / CGFloat(n))
+        let h = bounds.height
+        let start = values.count - n
+        for i in 0..<n {
+            let idx = start + i
+            let x = CGFloat(i) * (w + gap)
+            let r = NSRect(x: x, y: 1, width: w, height: h - 2)
+            let path = NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1)
+            if idx < 0 || idx >= values.count {
+                NSColor.separatorColor.withAlphaComponent(0.35).setFill()
+            } else {
+                let v = values[idx]
+                (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed)
+                    .withAlphaComponent(0.9).setFill()
+            }
+            path.fill()
+        }
+    }
+}
+
 final class SparkView: NSView {
     var values: [Double] = [] { didSet { needsDisplay = true } }
 

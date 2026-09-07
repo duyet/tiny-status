@@ -191,10 +191,16 @@ final class Store: ObservableObject {
         tunnels = tcp.map { t in
             let old = self.tunnels.first { $0.id == t.id }
             let info = infos[t.id]
+            var spark = old?.spark ?? []
+            let up = info?.up ?? old?.up ?? false
+            if info != nil {
+                spark.append(up ? 1 : 0)
+                if spark.count > 40 { spark = Array(spark.suffix(40)) }
+            }
             return TunnelRow(
                 id: t.id,
                 title: t.title,
-                up: info?.up ?? old?.up ?? false,
+                up: up,
                 busy: busy.contains(t.id),
                 host: info?.host ?? t.host ?? "127.0.0.1",
                 port: info?.port ?? t.port,
@@ -204,7 +210,8 @@ final class Store: ObservableObject {
                 command: info == nil ? old?.command : info?.command,
                 canStart: t.start != nil,
                 canStop: t.stop != nil,
-                canOpen: t.open != nil
+                canOpen: t.open != nil,
+                spark: spark
             )
         }
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
@@ -217,7 +224,7 @@ final class Store: ObservableObject {
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
                 s.append(DeployRow.healthScore(row.health))
-                if s.count > 24 { s = Array(s.suffix(24)) }
+                if s.count > 40 { s = Array(s.suffix(40)) }
                 row.spark = s
             }
             return row
