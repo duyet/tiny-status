@@ -245,7 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeToolbar() -> NSToolbar {
         let t = NSToolbar(identifier: "TinyStatus")
-        t.displayMode = .iconOnly
+        t.displayMode = .iconAndLabel
         t.allowsUserCustomization = false
         t.delegate = ToolbarShim.shared
         ToolbarShim.shared.delegate = self
@@ -298,6 +298,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         filter.submenu = filterMenu
         viewMenu.addItem(filter)
+        let group = NSMenuItem(title: "Group By", action: nil, keyEquivalent: "")
+        let groupMenu = NSMenu()
+        for (id, title) in [("tag", "Tag"), ("kind", "Kind"), ("none", "None")] {
+            let i = NSMenuItem(title: title, action: #selector(setGroupBy(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = id
+            groupMenu.addItem(i)
+        }
+        group.submenu = groupMenu
+        viewMenu.addItem(group)
+        let dens = NSMenuItem(title: "Density", action: nil, keyEquivalent: "")
+        let densMenu = NSMenu()
+        for (id, title) in [("compact", "Compact"), ("regular", "Regular")] {
+            let i = NSMenuItem(title: title, action: #selector(setDensity(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = id
+            densMenu.addItem(i)
+        }
+        dens.submenu = densMenu
+        viewMenu.addItem(dens)
         viewItem.submenu = viewMenu
         menubar.addItem(viewItem)
         let winItem = NSMenuItem()
@@ -331,6 +351,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Store.shared.persistTablePrefs()
     }
 
+    @objc func setGroupBy(_ sender: NSMenuItem) {
+        Store.shared.editGroupBy = sender.representedObject as? String ?? GroupBy.tag.rawValue
+        Store.shared.persistTablePrefs()
+    }
+
+    @objc func setDensity(_ sender: NSMenuItem) {
+        Store.shared.editDensity = sender.representedObject as? String ?? "compact"
+        Store.shared.persistTablePrefs()
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let s = Store.shared
         if menuItem.action == #selector(toggleColumn(_:)), let id = menuItem.representedObject as? String {
@@ -342,6 +372,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if menuItem.action == #selector(setFilter(_:)), let id = menuItem.representedObject as? String {
             menuItem.state = s.filterStatus == id ? .on : .off
         }
+        if menuItem.action == #selector(setGroupBy(_:)), let id = menuItem.representedObject as? String {
+            menuItem.state = s.editGroupBy == id ? .on : .off
+        }
+        if menuItem.action == #selector(setDensity(_:)), let id = menuItem.representedObject as? String {
+            menuItem.state = s.editDensity == id ? .on : .off
+        }
         return true
     }
 }
@@ -352,11 +388,11 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
     weak var status: StatusController?
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .flexibleSpace, .columns, .reload, .settings]
+        [.search, .filter, .groupBy, .density, .sort, .columns, .flexibleSpace, .reload, .settings]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .flexibleSpace, .columns, .reload, .settings]
+        [.search, .filter, .groupBy, .density, .sort, .columns, .flexibleSpace, .reload, .settings]
     }
 
     func toolbar(
@@ -378,6 +414,48 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
             let m = NSMenu()
             for (id, title) in [("all", "All"), ("up", "Up"), ("degraded", "Degraded"), ("down", "Down")] {
                 let it = NSMenuItem(title: title, action: #selector(AppDelegate.setFilter(_:)), keyEquivalent: "")
+                it.target = delegate
+                it.representedObject = id
+                m.addItem(it)
+            }
+            i.menu = m
+            return i
+        case .groupBy:
+            let i = NSMenuToolbarItem(itemIdentifier: .groupBy)
+            i.label = "Group"
+            i.toolTip = "Group rows by tag, kind, or none"
+            i.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Group")
+            let m = NSMenu()
+            for (id, title) in [("tag", "Tag"), ("kind", "Kind"), ("none", "None")] {
+                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setGroupBy(_:)), keyEquivalent: "")
+                it.target = delegate
+                it.representedObject = id
+                m.addItem(it)
+            }
+            i.menu = m
+            return i
+        case .density:
+            let i = NSMenuToolbarItem(itemIdentifier: .density)
+            i.label = "Density"
+            i.toolTip = "Compact or regular rows"
+            i.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: "Density")
+            let m = NSMenu()
+            for (id, title) in [("compact", "Compact"), ("regular", "Regular")] {
+                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setDensity(_:)), keyEquivalent: "")
+                it.target = delegate
+                it.representedObject = id
+                m.addItem(it)
+            }
+            i.menu = m
+            return i
+        case .sort:
+            let i = NSMenuToolbarItem(itemIdentifier: .sort)
+            i.label = "Sort"
+            i.toolTip = "Sort by column, or manual drag order"
+            i.image = NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: "Sort")
+            let m = NSMenu()
+            for (id, title) in [("", "Manual"), ("name", "Check"), ("kind", "Type"), ("status", "Status"), ("tags", "Tags"), ("latency", "Latency"), ("version", "Version"), ("target", "Target")] {
+                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setSort(_:)), keyEquivalent: "")
                 it.target = delegate
                 it.representedObject = id
                 m.addItem(it)
@@ -421,4 +499,7 @@ extension NSToolbarItem.Identifier {
     static let search = NSToolbarItem.Identifier("search")
     static let filter = NSToolbarItem.Identifier("filter")
     static let columns = NSToolbarItem.Identifier("columns")
+    static let groupBy = NSToolbarItem.Identifier("groupBy")
+    static let density = NSToolbarItem.Identifier("density")
+    static let sort = NSToolbarItem.Identifier("sort")
 }

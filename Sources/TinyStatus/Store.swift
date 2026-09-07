@@ -67,6 +67,7 @@ final class Store: ObservableObject {
         UserDefaults.standard.set(sortKey, forKey: "TinyStatus.sortKey")
         UserDefaults.standard.set(sortAscending, forKey: "TinyStatus.sortAscending")
         UserDefaults.standard.set(editDensity, forKey: "TinyStatus.density")
+        UserDefaults.standard.set(editGroupBy, forKey: "TinyStatus.groupBy")
     }
 
     var groupBy: GroupBy { GroupBy(rawValue: editGroupBy) ?? .tag }
@@ -451,7 +452,7 @@ final class Store: ObservableObject {
         configError = nil
         let c = cfg
         editPollSeconds = c.pollSeconds ?? 30
-        editGroupBy = c.groupBy ?? GroupBy.tag.rawValue
+        editGroupBy = c.groupBy ?? UserDefaults.standard.string(forKey: "TinyStatus.groupBy") ?? GroupBy.tag.rawValue
         editDensity = c.density ?? UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "compact"
         editAlertsEnabled = c.alerts?.enabled ?? true
         editOnDown = c.alerts?.onDown ?? true
