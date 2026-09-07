@@ -39,8 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let w = NSWindow(contentViewController: vc)
         w.title = "TinyStatus"
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        w.setContentSize(NSSize(width: 920, height: 480))
+        w.setContentSize(NSSize(width: 940, height: 500))
         w.minSize = NSSize(width: 720, height: 320)
+        w.backgroundColor = .windowBackgroundColor
+        w.titlebarAppearsTransparent = false
+        ToolbarShim.shared.status = vc
         w.toolbar = makeToolbar()
         w.toolbarStyle = .unified
         w.center()
@@ -94,7 +97,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func makeToolbar() -> NSToolbar {
         let t = NSToolbar(identifier: "TinyStatus")
-        t.displayMode = .iconAndLabel
+        t.displayMode = .iconOnly
+        t.allowsUserCustomization = false
         t.delegate = ToolbarShim.shared
         ToolbarShim.shared.delegate = self
         return t
@@ -129,13 +133,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 final class ToolbarShim: NSObject, NSToolbarDelegate {
     static let shared = ToolbarShim()
     weak var delegate: AppDelegate?
+    weak var status: StatusController?
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.reload, .settings, .flexibleSpace]
+        [.search, .flexibleSpace, .reload, .settings]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .reload, .settings]
+        [.search, .flexibleSpace, .reload, .settings]
     }
 
     func toolbar(
@@ -144,6 +149,11 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         switch itemIdentifier {
+        case .search:
+            let i = NSSearchToolbarItem(itemIdentifier: .search)
+            if let f = status?.search { i.searchField = f }
+            i.toolTip = "Filter checks"
+            return i
         case .reload:
             let i = NSToolbarItem(itemIdentifier: .reload)
             i.label = "Reload"
@@ -171,4 +181,5 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
 extension NSToolbarItem.Identifier {
     static let reload = NSToolbarItem.Identifier("reload")
     static let settings = NSToolbarItem.Identifier("settings")
+    static let search = NSToolbarItem.Identifier("search")
 }

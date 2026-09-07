@@ -20,14 +20,18 @@ final class HeartbeatView: NSView {
             let r = NSRect(x: x, y: 1, width: w, height: h - 2)
             let path = NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1)
             if idx < 0 || idx >= values.count {
-                NSColor.separatorColor.withAlphaComponent(0.35).setFill()
+                NSColor.quaternaryLabelColor.setFill()
             } else {
                 let v = values[idx]
-                (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed)
-                    .withAlphaComponent(0.9).setFill()
+                (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed).setFill()
             }
             path.fill()
         }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
 

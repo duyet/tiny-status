@@ -5,7 +5,7 @@ private enum Col: String {
     case name, kind, status, history, latency, target
 }
 
-private struct Row {
+struct CheckListRow {
     var id: String
     var title: String
     var kind: String
@@ -15,65 +15,70 @@ private struct Row {
     var spark: [Double]
     var latency: String
     var target: String
+    var url: String?
 }
 
 final class StatusController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+    let search = NSSearchField()
     private let store = Store.shared
     private var bag = Set<AnyCancellable>()
-    private var rows: [Row] = []
+    private var rows: [CheckListRow] = []
     private var filter = ""
     private let table = NSTableView()
-    private let search = NSSearchField()
-    private let summary = NSTextField(labelWithString: "")
+    private let empty = NSTextField(labelWithString: "No checks yet.\nImport a host or paste JSON from TinyStatus → Import checks…")
 
     override func loadView() {
-        let root = NSView()
-        search.placeholderString = "Filter checks"
+        search.placeholderString = "Filter"
         search.delegate = self
         search.focusRingType = .none
-        search.translatesAutoresizingMaskIntoConstraints = false
-        summary.font = .systemFont(ofSize: 12)
-        summary.textColor = .secondaryLabelColor
-        summary.translatesAutoresizingMaskIntoConstraints = false
+        search.sendsWholeSearchString = false
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
-        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
         table.headerView = NSTableHeaderView()
         table.delegate = self
         table.dataSource = self
-        table.rowHeight = 36
-        table.usesAlternatingRowBackgroundColors = true
-        table.allowsColumnReordering = false
+        table.rowHeight = 44
+        table.usesAlternatingRowBackgroundColors = false
+        table.allowsColumnReordering = true
         table.allowsEmptySelection = true
-        table.selectionHighlightStyle = .regular
-        table.style = .fullWidth
-        table.gridStyleMask = .solidHorizontalGridLineMask
-        table.gridColor = NSColor.separatorColor.withAlphaComponent(0.25)
-        addCol(.name, "Check", 180, min: 120)
-        addCol(.kind, "Type", 88, min: 72)
-        addCol(.status, "Status", 110, min: 88)
-        addCol(.history, "History", 168, min: 120)
-        addCol(.latency, "Latency", 80, min: 64)
-        addCol(.target, "Target", 220, min: 100)
+        table.style = .inset
+        table.gridStyleMask = []
+        table.backgroundColor = .clear
+        table.intercellSpacing = NSSize(width: 8, height: 2)
+        table.doubleAction = #selector(openRow)
+        table.target = self
+        addCol(.name, "Check", 200, min: 120)
+        addCol(.kind, "Type", 64, min: 52)
+        addCol(.status, "Status", 112, min: 96)
+        addCol(.history, "History", 180, min: 132)
+        addCol(.latency, "Latency", 72, min: 60)
+        addCol(.target, "Target", 240, min: 100)
         scroll.documentView = table
 
-        root.addSubview(search)
-        root.addSubview(summary)
+        empty.font = .systemFont(ofSize: 13)
+        empty.textColor = .secondaryLabelColor
+        empty.alignment = .center
+        empty.maximumNumberOfLines = 3
+        empty.isHidden = true
+        empty.translatesAutoresizingMaskIntoConstraints = false
+
+        let root = NSView()
+        root.wantsLayer = true
+        scroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scroll)
+        root.addSubview(empty)
         NSLayoutConstraint.activate([
-            search.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
-            search.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
-            search.widthAnchor.constraint(equalToConstant: 220),
-            summary.centerYAnchor.constraint(equalTo: search.centerYAnchor),
-            summary.leadingAnchor.constraint(equalTo: search.trailingAnchor, constant: 12),
-            summary.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            empty.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            empty.widthAnchor.constraint(lessThanOrEqualToConstant: 320),
         ])
         view = root
     }
@@ -83,6 +88,7 @@ final class StatusController: NSViewController, NSTableViewDataSource, NSTableVi
         c.title = title
         c.width = w
         c.minWidth = min
+        c.headerCell.alignment = .left
         table.addTableColumn(c)
     }
 
@@ -100,24 +106,24 @@ final class StatusController: NSViewController, NSTableViewDataSource, NSTableVi
     }
 
     func reload() {
-        var all: [Row] = []
+        var all: [CheckListRow] = []
         for t in store.tunnels {
             let target = t.port.map { "\(t.host):\($0)" } ?? t.host
-            all.append(Row(
+            all.append(CheckListRow(
                 id: t.id, title: t.title, kind: "TCP",
                 status: t.up ? "Up" : "Down", ok: t.up, warn: false,
-                spark: t.spark, latency: "—", target: target
+                spark: t.spark, latency: "—", target: target, url: nil
             ))
         }
         for d in store.deploys {
             let warn = d.health == "degraded"
             let ok = d.health == "healthy"
             let lat = d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—"
-            all.append(Row(
+            all.append(CheckListRow(
                 id: d.id, title: d.title, kind: "HTTP",
-                status: ok ? "Up" : warn ? "Degraded" : (d.health == "…" ? "…" : "Down"),
+                status: ok ? "Up" : warn ? "Degraded" : (d.health == "…" ? "Checking" : "Down"),
                 ok: ok, warn: warn, spark: d.spark, latency: lat,
-                target: d.openUrl ?? ""
+                target: d.openUrl ?? "", url: d.openUrl
             ))
         }
         if !filter.isEmpty {
@@ -129,108 +135,172 @@ final class StatusController: NSViewController, NSTableViewDataSource, NSTableVi
             }
         }
         rows = all
+        empty.isHidden = !all.isEmpty
         table.reloadData()
         let up = all.filter(\.ok).count
-        summary.stringValue = "\(up) of \(all.count) up"
-        if let last = store.lastCheckedLabel as String? { summary.stringValue += "  ·  \(last)" }
+        view.window?.subtitle = all.isEmpty ? "" : "\(up) of \(all.count) up · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
+    }
+
+    @objc private func openRow() {
+        let i = table.clickedRow
+        guard i >= 0, i < rows.count, let s = rows[i].url, let u = URL(string: s) else { return }
+        NSWorkspace.shared.open(u)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard row < rows.count, let id = tableColumn?.identifier.rawValue, let col = Col(rawValue: id) else { return nil }
+        guard row < rows.count, let raw = tableColumn?.identifier.rawValue, let col = Col(rawValue: raw) else { return nil }
         let r = rows[row]
         switch col {
         case .name:
-            return textCell(r.title, font: .systemFont(ofSize: 13, weight: .medium))
+            let id = NSUserInterfaceItemIdentifier("name")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? LabelCell) ?? LabelCell()
+            cell.identifier = id
+            cell.apply(r.title, font: .systemFont(ofSize: 13, weight: .medium), color: .labelColor)
+            return cell
         case .kind:
-            return badgeCell(r.kind)
+            let id = NSUserInterfaceItemIdentifier("kind")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? LabelCell) ?? LabelCell()
+            cell.identifier = id
+            cell.apply(r.kind, font: .systemFont(ofSize: 12, weight: .medium), color: .tertiaryLabelColor)
+            return cell
         case .status:
-            return statusCell(r)
+            let id = NSUserInterfaceItemIdentifier("status")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? StatusCell) ?? StatusCell()
+            cell.identifier = id
+            cell.apply(r)
+            return cell
         case .history:
-            return historyCell(r.spark)
+            let id = NSUserInterfaceItemIdentifier("history")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? HistoryCell) ?? HistoryCell()
+            cell.identifier = id
+            cell.apply(r.spark)
+            return cell
         case .latency:
-            return textCell(r.latency, font: .monospacedDigitSystemFont(ofSize: 12, weight: .regular), color: .secondaryLabelColor)
+            let id = NSUserInterfaceItemIdentifier("lat")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? LabelCell) ?? LabelCell()
+            cell.identifier = id
+            cell.apply(r.latency, font: .monospacedDigitSystemFont(ofSize: 12, weight: .regular), color: .secondaryLabelColor)
+            return cell
         case .target:
-            return textCell(r.target, font: .systemFont(ofSize: 12), color: .tertiaryLabelColor)
+            let id = NSUserInterfaceItemIdentifier("tgt")
+            let cell = (tableView.makeView(withIdentifier: id, owner: self) as? LabelCell) ?? LabelCell()
+            cell.identifier = id
+            cell.apply(r.target, font: .systemFont(ofSize: 12), color: .tertiaryLabelColor)
+            return cell
         }
     }
+}
 
-    private func textCell(_ s: String, font: NSFont, color: NSColor = .labelColor) -> NSTableCellView {
-        let v = NSTableCellView()
-        let t = NSTextField(labelWithString: s)
-        t.font = font
-        t.textColor = color
-        t.lineBreakMode = .byTruncatingMiddle
-        t.translatesAutoresizingMaskIntoConstraints = false
-        v.addSubview(t)
-        v.textField = t
+private final class LabelCell: NSTableCellView {
+    let label = NSTextField(labelWithString: "")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        label.lineBreakMode = .byTruncatingMiddle
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        textField = label
         NSLayoutConstraint.activate([
-            t.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 4),
-            t.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -4),
-            t.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        return v
     }
 
-    private func badgeCell(_ s: String) -> NSView {
-        let wrap = NSTableCellView()
-        let t = NSTextField(labelWithString: s)
-        t.font = .systemFont(ofSize: 11, weight: .medium)
-        t.textColor = .secondaryLabelColor
-        t.alignment = .center
-        t.wantsLayer = true
-        t.drawsBackground = true
-        t.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.18)
-        t.layer?.cornerRadius = 8
-        t.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addSubview(t)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ s: String, font: NSFont, color: NSColor) {
+        label.stringValue = s
+        label.font = font
+        label.textColor = color
+        toolTip = s
+    }
+}
+
+private final class StatusCell: NSTableCellView {
+    private let pill = NSView()
+    private let icon = NSImageView()
+    private let label = NSTextField(labelWithString: "")
+    private var ok = false
+    private var warn = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 11
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.imageScaling = .scaleProportionallyDown
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pill)
+        pill.addSubview(icon)
+        pill.addSubview(label)
         NSLayoutConstraint.activate([
-            t.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 4),
-            t.centerYAnchor.constraint(equalTo: wrap.centerYAnchor),
-            t.widthAnchor.constraint(greaterThanOrEqualToConstant: 52),
-            t.heightAnchor.constraint(equalToConstant: 20),
+            pill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            pill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            pill.heightAnchor.constraint(equalToConstant: 22),
+            icon.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 7),
+            icon.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 11),
+            icon.heightAnchor.constraint(equalToConstant: 11),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 4),
+            label.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
         ])
-        return wrap
     }
 
-    private func statusCell(_ r: Row) -> NSView {
-        let wrap = NSTableCellView()
-        let dot = NSView()
-        dot.wantsLayer = true
-        dot.layer?.cornerRadius = 4
-        dot.layer?.backgroundColor = (r.warn ? NSColor.systemOrange : r.ok ? NSColor.systemGreen : NSColor.systemRed).cgColor
-        dot.translatesAutoresizingMaskIntoConstraints = false
-        let t = NSTextField(labelWithString: r.status)
-        t.font = .systemFont(ofSize: 12, weight: .medium)
-        t.textColor = r.warn ? .systemOrange : r.ok ? .systemGreen : .systemRed
-        t.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addSubview(dot)
-        wrap.addSubview(t)
-        NSLayoutConstraint.activate([
-            dot.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 6),
-            dot.centerYAnchor.constraint(equalTo: wrap.centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 8),
-            dot.heightAnchor.constraint(equalToConstant: 8),
-            t.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 6),
-            t.centerYAnchor.constraint(equalTo: wrap.centerYAnchor),
-        ])
-        return wrap
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ r: CheckListRow) {
+        ok = r.ok
+        warn = r.warn
+        label.stringValue = r.status
+        let name = r.warn ? "exclamationmark.circle.fill" : r.ok ? "checkmark.circle.fill" : r.status == "Checking" ? "ellipsis.circle.fill" : "xmark.circle.fill"
+        icon.image = NSImage(systemSymbolName: name, accessibilityDescription: r.status)
+        icon.contentTintColor = tint()
+        label.textColor = tint()
+        paint()
     }
 
-    private func historyCell(_ spark: [Double]) -> NSView {
-        let wrap = NSTableCellView()
-        let h = HeartbeatView()
-        h.values = spark
-        h.translatesAutoresizingMaskIntoConstraints = false
-        wrap.addSubview(h)
+    private func tint() -> NSColor {
+        warn ? .systemOrange : ok ? .systemGreen : label.stringValue == "Checking" ? .secondaryLabelColor : .systemRed
+    }
+
+    private func paint() {
+        pill.layer?.backgroundColor = tint().withAlphaComponent(effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? 0.22 : 0.14).cgColor
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        paint()
+        icon.contentTintColor = tint()
+        label.textColor = tint()
+    }
+}
+
+private final class HistoryCell: NSTableCellView {
+    let beat = HeartbeatView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        beat.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(beat)
         NSLayoutConstraint.activate([
-            h.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: 4),
-            h.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -8),
-            h.centerYAnchor.constraint(equalTo: wrap.centerYAnchor),
-            h.heightAnchor.constraint(equalToConstant: 16),
+            beat.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            beat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            beat.centerYAnchor.constraint(equalTo: centerYAnchor),
+            beat.heightAnchor.constraint(equalToConstant: 18),
         ])
-        return wrap
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func apply(_ spark: [Double]) {
+        beat.values = spark
+        toolTip = spark.isEmpty ? "No history yet" : "Last \(spark.count) checks"
     }
 }
