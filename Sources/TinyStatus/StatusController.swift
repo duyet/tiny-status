@@ -93,6 +93,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         addCol(.target, "Target", 260, min: 120, max: 2000)
         table.outlineTableColumn = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.name.rawValue))
         table.tableColumns.first?.resizingMask = [.userResizingMask]
+        if table.sortDescriptors.isEmpty {
+            table.sortDescriptors = [NSSortDescriptor(key: Col.name.rawValue, ascending: true)]
+        }
         scroll.documentView = table
 
         empty.font = .systemFont(ofSize: 13)
@@ -120,6 +123,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         c.minWidth = min
         c.maxWidth = max
         c.resizingMask = [.userResizingMask, .autoresizingMask]
+        c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
         table.addTableColumn(c)
     }
 
@@ -147,19 +151,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             let n = deployNode(d)
             if matches(n) { items.append(n) }
         }
-        roots = grouped(items)
+        roots = sortNodes(grouped(items))
         empty.isHidden = !items.isEmpty
         table.reloadData()
-        let groupKept = keep.filter { $0.hasPrefix("g-") }
-        for n in roots {
-            if n.kind == "group", groupKept.isEmpty || groupKept.contains(n.id) || !filter.isEmpty {
-                table.expandItem(n)
-            }
-            if keep.contains(n.id) || !filter.isEmpty {
-                table.expandItem(n, expandChildren: !filter.isEmpty)
-            }
-            for c in n.children where keep.contains(c.id) { table.expandItem(c) }
-        }
+        restoreExpanded(keep)
         view.window?.subtitle = items.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
     }
@@ -312,6 +307,89 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         !((item as? Node)?.children.isEmpty ?? true)
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        let keep = expandedIds()
+        roots = sortNodes(roots)
+        table.reloadData()
+        restoreExpanded(keep)
+    }
+
+    private func restoreExpanded(_ keep: Set<String>) {
+        let groupKept = keep.filter { $0.hasPrefix("g-") }
+        for n in roots {
+            if n.kind == "group", groupKept.isEmpty || groupKept.contains(n.id) || !filter.isEmpty {
+                table.expandItem(n)
+            }
+            if keep.contains(n.id) || !filter.isEmpty {
+                table.expandItem(n, expandChildren: !filter.isEmpty)
+            }
+            for c in n.children where keep.contains(c.id) { table.expandItem(c) }
+        }
+    }
+
+    private func sortNodes(_ nodes: [Node]) -> [Node] {
+        let descs = table.sortDescriptors
+        let checks = nodes.filter { $0.kind != "info" }
+        let infos = nodes.filter { $0.kind == "info" }
+        let ordered: [Node]
+        if descs.isEmpty {
+            ordered = checks
+        } else {
+            ordered = checks.sorted { a, b in
+                for d in descs {
+                    let c = compare(a, b, key: d.key ?? Col.name.rawValue)
+                    if c != .orderedSame {
+                        return d.ascending ? c == .orderedAscending : c == .orderedDescending
+                    }
+                }
+                return a.title.localizedStandardCompare(b.title) == .orderedAscending
+            }
+        }
+        for n in ordered { n.children = sortNodes(n.children) }
+        return ordered + infos
+    }
+
+    private func compare(_ a: Node, _ b: Node, key: String) -> ComparisonResult {
+        switch Col(rawValue: key) {
+        case .name:
+            return a.title.localizedStandardCompare(b.title)
+        case .kind:
+            return a.kind.localizedStandardCompare(b.kind)
+        case .tags:
+            return a.tags.joined(separator: ",").localizedStandardCompare(b.tags.joined(separator: ","))
+        case .target:
+            return a.target.localizedStandardCompare(b.target)
+        case .status:
+            return cmp(statusRank(a), statusRank(b))
+        case .latency:
+            return cmp(latencyValue(a), latencyValue(b))
+        case .history:
+            return cmp(a.spark.last ?? -1, b.spark.last ?? -1)
+        default:
+            return a.title.localizedStandardCompare(b.title)
+        }
+    }
+
+    private func cmp<T: Comparable>(_ a: T, _ b: T) -> ComparisonResult {
+        a < b ? .orderedAscending : a > b ? .orderedDescending : .orderedSame
+    }
+
+    private func statusRank(_ n: Node) -> Int {
+        if n.kind == "info" { return 4 }
+        if n.status == "Checking" { return 2 }
+        if n.warn { return 1 }
+        if n.ok { return 3 }
+        return 0
+    }
+
+    private func latencyValue(_ n: Node) -> Double {
+        let s = n.latency.replacingOccurrences(of: ",", with: "")
+        if let d = Double(s.split(whereSeparator: { !$0.isNumber && $0 != "." }).first.map(String.init) ?? "") {
+            return d
+        }
+        return -1
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
