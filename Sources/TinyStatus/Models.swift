@@ -93,6 +93,7 @@ struct CheckRow: Identifiable {
     var id: String { name }
     var name: String
     var status: String
+    var ms: Double? = nil
 }
 
 struct DeployRow: Identifiable {
@@ -105,5 +106,12 @@ struct DeployRow: Identifiable {
     var checks: [CheckRow]
     var openUrl: String?
     var spark: [Double] = []
+    var uptime: Double? = nil
     var up: Bool { health == "healthy" }
+    var okCount: Int { checks.filter { $0.status == "healthy" }.count }
+    var avgMs: Double? {
+        let xs = checks.compactMap(\.ms)
+        guard !xs.isEmpty else { return nil }
+        return xs.reduce(0, +) / Double(xs.count)
+    }
 }

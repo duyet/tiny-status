@@ -119,6 +119,7 @@ struct Line: View {
 
 struct Spark: View {
     var values: [Double]
+    var wide: Bool = false
     var body: some View {
         Canvas { ctx, size in
             guard values.count > 1 else { return }
@@ -138,7 +139,7 @@ struct Spark: View {
             ctx.fill(fill, with: .color(color.opacity(0.22)))
             ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
         }
-        .frame(width: 56, height: 16)
+        .frame(minWidth: wide ? 80 : 56, idealWidth: wide ? 240 : 56, maxWidth: wide ? .infinity : 56, minHeight: wide ? 52 : 16, maxHeight: wide ? 52 : 16)
         .help("Health over the last \(max(values.count, 0)) checks (green up, orange degraded, red down)")
         .accessibilityLabel("Health history")
     }
@@ -148,6 +149,64 @@ struct Spark: View {
         case "healthy": 1
         case "degraded": 0.5
         default: 0
+        }
+    }
+}
+
+struct MetricChip: View {
+    var icon: String
+    var title: String
+    var value: String
+    var color: Color
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Label(title, systemImage: icon)
+                .font(.caption2)
+                .foregroundStyle(color)
+            Text(value)
+                .font(.caption.weight(.semibold).monospaced())
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .help("\(title): \(value)")
+    }
+}
+
+struct LatencyChart: View {
+    var checks: [CheckRow]
+    var body: some View {
+        let maxMs = max(checks.compactMap(\.ms).max() ?? 1, 1)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Latency")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(checks) { c in
+                HStack(spacing: 6) {
+                    Image(systemName: checkIcon(c.name))
+                        .font(.system(size: 9))
+                        .foregroundStyle(Palette.health(c.status))
+                        .frame(width: 12)
+                        .help("\(c.name): \(c.status)")
+                    Text(c.name)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .frame(width: 88, alignment: .leading)
+                    GeometryReader { g in
+                        let w = g.size.width * CGFloat((c.ms ?? 0) / maxMs)
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(Palette.health(c.status))
+                            .frame(width: max(w, 3), height: 8)
+                    }
+                    .frame(height: 8)
+                    Text(c.ms.map { String(format: "%.0f ms", $0) } ?? "—")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                }
+            }
         }
     }
 }
@@ -564,7 +623,7 @@ struct DeployCard: View {
                             .rotationEffect(.degrees(open ? 90 : 0))
                             .help(open ? "Collapse details" : "Expand: health, versions, checks")
                         Spacer(minLength: 2)
-                        Spark(values: d.spark)
+                        if !open { Spark(values: d.spark) }
                         Mark(
                             ok: d.up,
                             warn: d.health == "degraded",
@@ -578,13 +637,43 @@ struct DeployCard: View {
                     CheckDots(checks: d.checks)
                 }
                 if open {
-                    Line(
-                        icon: "heart",
-                        label: "Health",
-                        value: d.health,
-                        ok: d.up,
-                        warn: d.health == "degraded"
-                    )
+                    HStack(spacing: 6) {
+                        MetricChip(
+                            icon: "heart.fill",
+                            title: "Health",
+                            value: d.health,
+                            color: Palette.health(d.health)
+                        )
+                        MetricChip(
+                            icon: "checkmark.circle",
+                            title: "Checks",
+                            value: "\(d.okCount)/\(max(d.checks.count, 0))",
+                            color: d.okCount == d.checks.count && !d.checks.isEmpty ? .green : .orange
+                        )
+                        MetricChip(
+                            icon: "speedometer",
+                            title: "Avg latency",
+                            value: d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—",
+                            color: Palette.app
+                        )
+                        MetricChip(
+                            icon: "clock",
+                            title: "Uptime",
+                            value: d.uptime.map { String(format: "%.1fs", $0) } ?? "—",
+                            color: Palette.pod
+                        )
+                    }
+                    if d.spark.count > 1 {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Health history")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spark(values: d.spark, wide: true)
+                        }
+                    }
+                    if d.checks.contains(where: { $0.ms != nil }) {
+                        LatencyChart(checks: d.checks)
+                    }
                     VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
                     Line(
                         icon: "chevron.left.forwardslash.chevron.right",
@@ -605,20 +694,11 @@ struct DeployCard: View {
                         ok: d.k8sLiveVersion != "—" && d.k8sLiveVersion == d.liveVersion
                     )
                     if !d.checks.isEmpty {
-                        HStack {
-                            Image(systemName: "circle.grid.2x1")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 14)
-                                .help("Per-service health probes from /health")
-                            Text("Checks").font(.caption)
-                            Spacer()
-                            CheckDots(checks: d.checks)
-                        }
                         ForEach(d.checks) { c in
                             Line(
                                 icon: checkIcon(c.name),
                                 label: c.name,
-                                value: c.status,
+                                value: c.ms.map { "\(c.status)  \(String(format: "%.0f ms", $0))" } ?? c.status,
                                 ok: c.status == "healthy",
                                 warn: c.status == "degraded"
                             )

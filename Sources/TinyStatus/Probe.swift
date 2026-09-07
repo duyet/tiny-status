@@ -51,14 +51,17 @@ enum Probe {
         var live = "—"
         var health = "down"
         var checks: [CheckRow] = []
+        var uptime: Double?
         if let url = d.healthUrl, let json = HTTP.getJSON(url, timeout: 18) {
             health = (json["status"] as? String) ?? "unknown"
             live = (json["version"] as? String) ?? "—"
+            uptime = num(json["uptime_seconds"])
             if let arr = json["checks"] as? [[String: Any]] {
                 checks = arr.map {
                     CheckRow(
                         name: ($0["service"] as? String) ?? "?",
-                        status: ($0["status"] as? String) ?? "?"
+                        status: ($0["status"] as? String) ?? "?",
+                        ms: num($0["response_time_ms"])
                     )
                 }
             }
@@ -67,8 +70,16 @@ enum Probe {
         let k8sLive = tag(Shell.output(d.k8sLive ?? [], timeout: 20))
         return DeployRow(
             id: d.id, title: d.title, health: health, liveVersion: live,
-            k8sVersion: k8s, k8sLiveVersion: k8sLive, checks: checks, openUrl: d.openUrl
+            k8sVersion: k8s, k8sLiveVersion: k8sLive, checks: checks, openUrl: d.openUrl,
+            uptime: uptime
         )
+    }
+
+    static func num(_ v: Any?) -> Double? {
+        if let d = v as? Double { return d }
+        if let i = v as? Int { return Double(i) }
+        if let n = v as? NSNumber { return n.doubleValue }
+        return nil
     }
 
     static func tag(_ image: String) -> String {
