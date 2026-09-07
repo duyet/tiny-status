@@ -1,0 +1,10 @@
+{
+  "pollSeconds": 30,
+  "checks": [
+    { "id": "web", "title": "Web", "kind": "http", "url": "https://example.com/health" },
+    { "id": "redis", "title": "Redis", "kind": "tcp", "host": "127.0.0.1", "port": 6379 },
+    { "id": "ssh", "title": "Tunnel", "kind": "tcp", "host": "127.0.0.1", "port": 8443 },
+    { "id": "ts", "title": "Peer", "kind": "tcp", "host": "my-machine.tailnet.ts.net", "port": 22 },
+    { "id": "cmd", "title": "Custom", "kind": "command", "command": ["/usr/bin/true"] }
+  ]
+}

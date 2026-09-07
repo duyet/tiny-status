@@ -82,6 +82,34 @@ enum Probe {
         return nil
     }
 
+    static func check(_ c: Check) -> (tunnel: TunnelInfo?, deploy: DeployRow?) {
+        switch c.kind {
+        case .tcp:
+            let t = Tunnel(
+                id: c.id, title: c.title, status: nil,
+                start: c.start, stop: c.stop, open: c.open,
+                probeHost: c.host, probePort: c.port
+            )
+            return (tunnel(t), nil)
+        case .http:
+            let d = Deployment(
+                id: c.id, title: c.title, healthUrl: c.url,
+                k8s: c.k8s, k8sLive: c.k8sLive, openUrl: c.openUrl ?? c.url
+            )
+            return (nil, deployment(d))
+        case .command:
+            let code = Shell.run(c.command ?? ["/usr/bin/true"], timeout: 20)
+            let row = DeployRow(
+                id: c.id, title: c.title,
+                health: code == 0 ? "healthy" : "unhealthy",
+                liveVersion: "—", k8sVersion: "—", k8sLiveVersion: "—",
+                checks: [CheckRow(name: "command", status: code == 0 ? "healthy" : "unhealthy")],
+                openUrl: nil
+            )
+            return (nil, row)
+        }
+    }
+
     static func tag(_ image: String) -> String {
         let s = image.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return "—" }

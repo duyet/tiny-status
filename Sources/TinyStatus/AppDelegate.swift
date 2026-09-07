@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var importWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.instance = self
@@ -47,6 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.isReleasedWhenClosed = false
         w.makeKeyAndOrderFront(nil)
         mainWindow = w
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showImport() {
+        if importWindow == nil {
+            let w = NSWindow(contentViewController: ImportController())
+            w.title = "Import checks"
+            w.styleMask = [.titled, .closable, .resizable]
+            w.setContentSize(NSSize(width: 520, height: 360))
+            w.isReleasedWhenClosed = false
+            importWindow = w
+        }
+        importWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -94,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "About TinyStatus", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "Import checks…", action: #selector(showImport), keyEquivalent: "i")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu

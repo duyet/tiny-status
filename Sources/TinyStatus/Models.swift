@@ -25,6 +25,7 @@ struct Config: Codable {
     var backup: Backup?
     var tunnels: [Tunnel]?
     var deployments: [Deployment]?
+    var checks: [Check]?
 }
 
 struct CachedDeploy: Codable {

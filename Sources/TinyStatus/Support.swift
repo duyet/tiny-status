@@ -84,6 +84,19 @@ enum ConfigLoader {
             d.openUrl = d.openUrl.map(expand)
             return d
         }
+        cfg.checks = cfg.checks?.map { c in
+            var c = c
+            c.url = c.url.map(expand)
+            c.host = c.host.map(expand)
+            c.command = c.command?.map(expand)
+            c.k8s = c.k8s?.map(expand)
+            c.k8sLive = c.k8sLive?.map(expand)
+            c.openUrl = c.openUrl.map(expand)
+            c.start = c.start?.map(expand)
+            c.stop = c.stop?.map(expand)
+            c.open = c.open?.map(expand)
+            return c
+        }
         return cfg
     }
 
@@ -98,21 +111,9 @@ enum ConfigLoader {
 let exampleJSON = """
 {
   "pollSeconds": 30,
-  "tunnels": [
-    {
-      "id": "local",
-      "title": "Local",
-      "probeHost": "127.0.0.1",
-      "probePort": 8080
-    }
-  ],
-  "deployments": [
-    {
-      "id": "api",
-      "title": "API",
-      "healthUrl": "https://example.com/health",
-      "openUrl": "https://example.com/health"
-    }
+  "checks": [
+    {"id":"web","title":"Web","kind":"http","url":"https://example.com/health","discover":true},
+    {"id":"local","title":"Local 8080","kind":"tcp","host":"127.0.0.1","port":8080}
   ]
 }
 """

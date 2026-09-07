@@ -100,16 +100,29 @@ final class Store: ObservableObject {
         poll()
     }
 
+    func allChecks() -> [Check] {
+        var seen = Set<String>()
+        var out: [Check] = []
+        for c in (cfg.checks ?? [])
+            + (cfg.tunnels ?? []).map(Check.from(tunnel:))
+            + (cfg.deployments ?? []).map(Check.from(deployment:))
+        {
+            if seen.insert(c.id).inserted { out.append(c) }
+        }
+        return out
+    }
+
     func load() {
         cfg = ConfigLoader.load()
         cfgStamp = ConfigLoader.mtime()
-        tunnels = (cfg.tunnels ?? []).map {
-            TunnelRow(id: $0.id, title: $0.title, up: false, busy: false)
+        let checks = allChecks()
+        tunnels = checks.filter { $0.kind == .tcp }.map {
+            TunnelRow(id: $0.id, title: $0.title, up: false, busy: false, host: $0.host ?? "127.0.0.1", port: $0.port)
         }
-        deploys = (cfg.deployments ?? []).map {
+        deploys = checks.filter { $0.kind != .tcp }.map {
             DeployRow(
                 id: $0.id, title: $0.title, health: "…", liveVersion: "…",
-                k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl
+                k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl ?? $0.url
             )
         }
         applyCache()
@@ -150,31 +163,32 @@ final class Store: ObservableObject {
     }
 
     func poll() {
-        let tun = cfg.tunnels ?? []
-        let dep = cfg.deployments ?? []
+        let checks = allChecks()
         let busyNow = busy
         Task.detached {
             var infos: [String: TunnelInfo] = [:]
-            await withTaskGroup(of: (String, TunnelInfo).self) { g in
-                for t in tun where !busyNow.contains(t.id) {
-                    g.addTask { (t.id, Probe.tunnel(t)) }
-                }
-                for await x in g { infos[x.0] = x.1 }
-            }
             var drows: [String: DeployRow] = [:]
-            await withTaskGroup(of: DeployRow.self) { g in
-                for d in dep { g.addTask { Probe.deployment(d) } }
-                for await r in g { drows[r.id] = r }
+            await withTaskGroup(of: (String, TunnelInfo?, DeployRow?).self) { g in
+                for c in checks where !busyNow.contains(c.id) {
+                    g.addTask {
+                        let r = Probe.check(c)
+                        return (c.id, r.tunnel, r.deploy)
+                    }
+                }
+                for await x in g {
+                    if let t = x.1 { infos[x.0] = t }
+                    if let d = x.2 { drows[x.0] = d }
+                }
             }
-            let u = infos
-            let d = drows
-            await MainActor.run { self.apply(tunnels: u, deploys: d) }
+            await MainActor.run { self.apply(tunnels: infos, deploys: drows) }
         }
     }
 
     private func apply(tunnels infos: [String: TunnelInfo], deploys: [String: DeployRow]) {
         let prevT = Dictionary(uniqueKeysWithValues: self.tunnels.map { ($0.id, $0) })
-        tunnels = (cfg.tunnels ?? []).map { t in
+        let tcp = allChecks().filter { $0.kind == .tcp }
+        let httpish = allChecks().filter { $0.kind != .tcp }
+        tunnels = tcp.map { t in
             let old = self.tunnels.first { $0.id == t.id }
             let info = infos[t.id]
             return TunnelRow(
@@ -182,8 +196,8 @@ final class Store: ObservableObject {
                 title: t.title,
                 up: info?.up ?? old?.up ?? false,
                 busy: busy.contains(t.id),
-                host: info?.host ?? t.probeHost ?? "127.0.0.1",
-                port: info?.port ?? t.probePort,
+                host: info?.host ?? t.host ?? "127.0.0.1",
+                port: info?.port ?? t.port,
                 pid: info == nil ? old?.pid : info?.pid,
                 process: info == nil ? old?.process : info?.process,
                 elapsed: info == nil ? old?.elapsed : info?.elapsed,
@@ -194,11 +208,11 @@ final class Store: ObservableObject {
             )
         }
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
-        self.deploys = (cfg.deployments ?? []).map { d in
+        self.deploys = httpish.map { d in
             var row = deploys[d.id] ?? self.deploys.first { $0.id == d.id }
                 ?? DeployRow(
                     id: d.id, title: d.title, health: "…", liveVersion: "…",
-                    k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: d.openUrl
+                    k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: d.openUrl ?? d.url
                 )
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
@@ -403,6 +417,47 @@ final class Store: ObservableObject {
                 }
             }
         }
+    }
+
+    func importPaste(_ text: String) {
+        let parsed = Discovery.parse(text)
+        Task.detached {
+            var added: [Check] = []
+            for p in parsed {
+                if p.kind == .http, p.discover, let u = p.url, let url = URL(string: u),
+                   let found = Discovery.probeHTTP(base: url)
+                {
+                    added.append(found.asCheck())
+                } else {
+                    added.append(p.asCheck())
+                }
+            }
+            await MainActor.run { self.appendChecks(added) }
+        }
+    }
+
+    func appendChecks(_ new: [Check]) {
+        guard !new.isEmpty else { return }
+        var root: [String: Any] = [:]
+        if let data = try? Data(contentsOf: ConfigLoader.userURL),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        {
+            root = obj
+        }
+        var list = cfg.checks ?? []
+        var seen = Set(list.map(\.id))
+        list.append(contentsOf: new.filter { seen.insert($0.id).inserted })
+        cfg.checks = list
+        if let encoded = try? JSONEncoder().encode(list),
+           let arr = try? JSONSerialization.jsonObject(with: encoded)
+        {
+            root["checks"] = arr
+        }
+        if let out = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) {
+            try? out.write(to: ConfigLoader.userURL, options: .atomic)
+        }
+        load()
+        poll()
     }
 
     enum TunnelAction { case start, stop, open }
