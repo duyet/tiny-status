@@ -11,6 +11,7 @@ Change only what the task asks. Do not rewrite Swift for style. Do not add specu
 ## Config
 
 - Live path: `~/.config/tiny-status/tunnels.json` (legacy filename).
+- Config `{vars}`: `{home}` `{user}` `{tmp}` `{config}` `{hostname}` `{env:NAME}` plus `"vars": { "key": "value" }` and `{key}` in strings.
 - Canonical array: **`checks[]`**.
 - Example files in-repo: `tunnels.example.json`, `checks.example.json`.
 - Examples must be generic: `example.com`, `127.0.0.1`, `my-machine.tailnet.ts.net`. **No company hosts, no kube contexts, no secrets.**

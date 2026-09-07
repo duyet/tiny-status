@@ -539,7 +539,7 @@ struct ConfigWindow: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
             }
-            Text("Edits apply on Save. checks[], tunnels[], and deployments[] are merged by id.")
+            Text("Edits apply on Save. Use vars: {home} {user} {env:NAME} and \"vars\": {\"host\":\"example.com\"} then {host} in URLs.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 16)

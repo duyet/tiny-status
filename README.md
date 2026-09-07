@@ -30,17 +30,34 @@ Releases: conventional commits on `main` open a **release-please** PR that bumps
 
 Live file (legacy name): `~/.config/tiny-status/tunnels.json`
 
-The payload is **`checks[]`**, not the old `tunnels` / `deployments` split. Copy from [`tunnels.example.json`](tunnels.example.json) or [`checks.example.json`](checks.example.json). `{home}` expands to your home directory.
+The payload is **`checks[]`**, not the old `tunnels` / `deployments` split. Copy from [`tunnels.example.json`](tunnels.example.json) or [`checks.example.json`](checks.example.json).
+
+Strings in titles, URLs, hosts, commands, tags, and backup paths expand `{variables}`:
+
+| Token | Value |
+|-------|--------|
+| `{home}` | Home directory |
+| `{user}` | Account name |
+| `{tmp}` | Temp directory |
+| `{config}` | `~/.config/tiny-status` |
+| `{hostname}` | Machine name |
+| `{env:NAME}` | Process environment |
+| `{yourKey}` | From top-level `"vars"` |
 
 ```json
 {
   "pollSeconds": 30,
+  "vars": {
+    "host": "example.com",
+    "health": "https://{host}/api/v1/health"
+  },
   "checks": [
-    { "id": "web", "title": "Web", "kind": "http", "url": "https://example.com/health" },
+    { "id": "web", "title": "Web", "kind": "http", "url": "{health}" },
     { "id": "redis", "title": "Redis", "kind": "tcp", "host": "127.0.0.1", "port": 6379 },
     { "id": "ssh", "title": "Tunnel", "kind": "tcp", "host": "127.0.0.1", "port": 8443 },
     { "id": "ts", "title": "Peer", "kind": "tcp", "host": "my-machine.tailnet.ts.net", "port": 22 },
-    { "id": "cmd", "title": "Custom", "kind": "command", "command": ["/usr/bin/true"] }
+    { "id": "cmd", "title": "Custom", "kind": "command", "command": ["/usr/bin/true"] },
+    { "id": "script", "title": "Local script", "kind": "command", "command": ["{home}/bin/health.sh"] }
   ]
 }
 ```

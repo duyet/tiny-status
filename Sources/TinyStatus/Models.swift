@@ -21,6 +21,7 @@ struct Backup: Codable {
 
 struct Config: Codable {
     var pollSeconds: Double?
+    var vars: [String: String]?
     var groupBy: String?
     var density: String?
     var groups: [String]?

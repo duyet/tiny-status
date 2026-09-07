@@ -1,7 +1,11 @@
 {
   "pollSeconds": 30,
+  "vars": {
+    "host": "example.com",
+    "health": "https://{host}/health"
+  },
   "checks": [
-    { "id": "web", "title": "Web", "kind": "http", "url": "https://example.com/health" },
+    { "id": "web", "title": "Web", "kind": "http", "url": "{health}" },
     { "id": "redis", "title": "Redis", "kind": "tcp", "host": "127.0.0.1", "port": 6379 },
     { "id": "ssh", "title": "Tunnel", "kind": "tcp", "host": "127.0.0.1", "port": 8443 },
     { "id": "ts", "title": "Peer", "kind": "tcp", "host": "my-machine.tailnet.ts.net", "port": 22 },
