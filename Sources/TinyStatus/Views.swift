@@ -342,62 +342,7 @@ struct Panel: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(store.tunnels) { row in
-                        Card {
-                            VStack(alignment: .leading, spacing: 6) {
-                                HStack(spacing: 8) {
-                                    BrandIcon(title: row.title)
-                                    Text(row.title).font(.subheadline.weight(.semibold))
-                                    Spacer(minLength: 4)
-                                    Mark(ok: row.up && !row.busy)
-                                    if row.up {
-                                        if row.canStop {
-                                            IconBtn(system: "pause.circle", help: "Disconnect") {
-                                                store.runTunnel(row.id, kind: .stop)
-                                            }
-                                        }
-                                        if row.canOpen {
-                                            IconBtn(system: "safari", help: "Open") {
-                                                store.runTunnel(row.id, kind: .open)
-                                            }
-                                        }
-                                    } else if row.canStart {
-                                        IconBtn(system: "link", help: "Connect") {
-                                            store.runTunnel(row.id, kind: .start)
-                                        }
-                                    }
-                                }
-                                HStack(spacing: 6) {
-                                    Image(systemName: "network").foregroundStyle(.secondary).imageScale(.small)
-                                    Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
-                                        .font(.caption.monospaced())
-                                    if row.up {
-                                        Text("listening").font(.caption2).foregroundStyle(.green)
-                                    } else {
-                                        Text("nothing listening").font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                }
-                                if row.up {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "terminal").foregroundStyle(.secondary).imageScale(.small)
-                                        Text(row.process ?? "process")
-                                        if let pid = row.pid { Text("pid \(pid)").foregroundStyle(.secondary) }
-                                        if let e = row.elapsed { Text("up \(e)").foregroundStyle(.secondary) }
-                                    }
-                                    .font(.caption2)
-                                    if let cmd = row.command {
-                                        Text(cmd)
-                                            .font(.caption2.monospaced())
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(2)
-                                            .textSelection(.enabled)
-                                    }
-                                } else {
-                                    Text("Start a local forward to this port, or tap Connect if a start command is configured.")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
+                        TunnelCard(row: row)
                     }
                     ForEach(regionGroups(store.deploys)) { group in
                         VStack(alignment: .leading, spacing: 6) {
@@ -441,29 +386,167 @@ struct Panel: View {
     }
 }
 
-struct DeployCard: View {
-    var d: DeployRow
+struct TunnelCard: View {
+    var row: TunnelRow
     @ObservedObject var store = Store.shared
+    var open: Bool { store.expanded.contains(row.id) }
     var body: some View {
         Card {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
-                        .foregroundStyle(.tint)
-                        .frame(width: 14)
-                    Text(envLabel(d.title))
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 2)
-                    Spark(values: d.spark)
-                    Mark(ok: d.up, warn: d.health == "degraded")
-                    if let url = d.openUrl {
-                        IconBtn(system: "arrow.up.right.square", help: "Open health") {
-                            store.openURL(url)
+                HStack(spacing: 8) {
+                    Button { store.toggleExpand(row.id) } label: {
+                        HStack(spacing: 8) {
+                            BrandIcon(title: row.title)
+                            Text(row.title).font(.subheadline.weight(.semibold))
+                            Text(row.port.map { "\(row.host):\($0)" } ?? "")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(open ? 90 : 0))
+                            Spacer(minLength: 4)
+                            Mark(ok: row.up && !row.busy)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    if row.up {
+                        if row.canStop {
+                            IconBtn(system: "pause.circle", help: "Disconnect") {
+                                store.runTunnel(row.id, kind: .stop)
+                            }
+                        }
+                        if row.canOpen {
+                            IconBtn(system: "safari", help: "Open") {
+                                store.runTunnel(row.id, kind: .open)
+                            }
+                        }
+                    } else if row.canStart {
+                        IconBtn(system: "link", help: "Connect") {
+                            store.runTunnel(row.id, kind: .start)
                         }
                     }
                 }
-                CheckDots(checks: d.checks)
-                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
+                if open {
+                    HStack(spacing: 6) {
+                        Image(systemName: "network").foregroundStyle(.secondary).imageScale(.small)
+                        Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
+                            .font(.caption.monospaced())
+                        if row.up {
+                            Text("listening").font(.caption2).foregroundStyle(.green)
+                        } else {
+                            Text("nothing listening").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    if row.up {
+                        HStack(spacing: 6) {
+                            Image(systemName: "terminal").foregroundStyle(.secondary).imageScale(.small)
+                            Text(row.process ?? "process")
+                            if let pid = row.pid { Text("pid \(pid)").foregroundStyle(.secondary) }
+                            if let e = row.elapsed { Text("up \(e)").foregroundStyle(.secondary) }
+                        }
+                        .font(.caption2)
+                        if let cmd = row.command {
+                            Text(cmd)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(4)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        Text("Start a local forward to this port, or tap Connect if a start command is configured.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct DeployCard: View {
+    var d: DeployRow
+    @ObservedObject var store = Store.shared
+    var open: Bool { store.expanded.contains(d.id) }
+    var body: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 6) {
+                Button { store.toggleExpand(d.id) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
+                            .foregroundStyle(.tint)
+                            .frame(width: 14)
+                        Text(envLabel(d.title))
+                            .font(.subheadline.weight(.semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(open ? 90 : 0))
+                        Spacer(minLength: 2)
+                        Spark(values: d.spark)
+                        Mark(ok: d.up, warn: d.health == "degraded")
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if !open {
+                    CheckDots(checks: d.checks)
+                }
+                if open {
+                    Line(
+                        icon: "heart",
+                        label: "Health",
+                        value: d.health,
+                        ok: d.up,
+                        warn: d.health == "degraded"
+                    )
+                    VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
+                    Line(
+                        icon: "chevron.left.forwardslash.chevron.right",
+                        label: "App live",
+                        value: d.liveVersion,
+                        ok: d.up
+                    )
+                    Line(
+                        icon: "shippingbox",
+                        label: "k8s deploy",
+                        value: d.k8sVersion,
+                        ok: d.k8sVersion != "—" && d.k8sVersion == d.k8sLiveVersion
+                    )
+                    Line(
+                        icon: "memorychip",
+                        label: "k8s live",
+                        value: d.k8sLiveVersion,
+                        ok: d.k8sLiveVersion != "—" && d.k8sLiveVersion == d.liveVersion
+                    )
+                    if !d.checks.isEmpty {
+                        HStack {
+                            Image(systemName: "circle.grid.2x1")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 14)
+                            Text("Checks").font(.caption)
+                            Spacer()
+                            CheckDots(checks: d.checks)
+                        }
+                        ForEach(d.checks) { c in
+                            Line(
+                                icon: checkIcon(c.name),
+                                label: c.name,
+                                value: c.status,
+                                ok: c.status == "healthy",
+                                warn: c.status == "degraded"
+                            )
+                        }
+                    }
+                    if let url = d.openUrl {
+                        Button { store.openURL(url) } label: {
+                            Label("Open health", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
             }
         }
     }

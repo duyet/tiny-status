@@ -29,6 +29,11 @@ final class Store: ObservableObject {
     @Published var gitLog = ""
     @Published var gitBusy = false
     @Published var gitConflict = false
+    @Published var expanded: Set<String> = []
+
+    func toggleExpand(_ id: String) {
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+    }
 
     var lastCheckedLabel: String {
         guard let d = lastChecked else { return "Not checked yet" }
