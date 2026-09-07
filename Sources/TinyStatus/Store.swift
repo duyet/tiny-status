@@ -36,6 +36,38 @@ final class Store: ObservableObject {
     var compact: Bool { editDensity != "regular" }
     @Published var settingsPage: String = "general"
     @Published var settingsCheckId: String?
+    @Published var hiddenColumns: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "TinyStatus.hiddenColumns") ?? ["group"])
+    @Published var filterStatus: String = UserDefaults.standard.string(forKey: "TinyStatus.filterStatus") ?? "all"
+    @Published var sortKey: String = UserDefaults.standard.string(forKey: "TinyStatus.sortKey") ?? ""
+    @Published var sortAscending: Bool = UserDefaults.standard.object(forKey: "TinyStatus.sortAscending") as? Bool ?? true
+
+    static let tableColumns: [(id: String, title: String)] = [
+        ("kind", "Type"),
+        ("tags", "Tags"),
+        ("group", "Group"),
+        ("history", "History"),
+        ("latency", "Latency"),
+        ("version", "Version"),
+        ("target", "Target"),
+    ]
+
+    func columnVisible(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { !self.hiddenColumns.contains(id) },
+            set: { on in
+                if on { self.hiddenColumns.remove(id) } else { self.hiddenColumns.insert(id) }
+                UserDefaults.standard.set(Array(self.hiddenColumns), forKey: "TinyStatus.hiddenColumns")
+            }
+        )
+    }
+
+    func persistTablePrefs() {
+        UserDefaults.standard.set(Array(hiddenColumns), forKey: "TinyStatus.hiddenColumns")
+        UserDefaults.standard.set(filterStatus, forKey: "TinyStatus.filterStatus")
+        UserDefaults.standard.set(sortKey, forKey: "TinyStatus.sortKey")
+        UserDefaults.standard.set(sortAscending, forKey: "TinyStatus.sortAscending")
+        UserDefaults.standard.set(editDensity, forKey: "TinyStatus.density")
+    }
 
     var groupBy: GroupBy { GroupBy(rawValue: editGroupBy) ?? .tag }
     var groupOrder: [String] { cfg.groups ?? ["Tunnel", "SG", "EU", "ZA", "dev", "prod", "Other"] }

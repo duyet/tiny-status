@@ -425,7 +425,32 @@ struct ConfigWindow: View {
                     Text("None").tag(GroupBy.none.rawValue)
                 }
                 .pickerStyle(.segmented)
-                Text("These apply to the table immediately. Save writes them to the config file.")
+                Picker("Filter", selection: $store.filterStatus) {
+                    Text("All").tag("all")
+                    Text("Up").tag("up")
+                    Text("Degraded").tag("degraded")
+                    Text("Down").tag("down")
+                }
+                Picker("Sort by", selection: $store.sortKey) {
+                    Text("Manual (drag)").tag("")
+                    Text("Check").tag("name")
+                    Text("Type").tag("kind")
+                    Text("Tags").tag("tags")
+                    Text("Group").tag("group")
+                    Text("Status").tag("status")
+                    Text("Latency").tag("latency")
+                    Text("Version").tag("version")
+                    Text("Target").tag("target")
+                }
+                if !store.sortKey.isEmpty {
+                    Toggle("Ascending", isOn: $store.sortAscending)
+                }
+            }
+            Section("Columns") {
+                ForEach(Store.tableColumns, id: \.id) { col in
+                    Toggle(col.title, isOn: store.columnVisible(col.id))
+                }
+                Text("Also: right-click the table header, or View → Columns. Filter box searches name, tag, type, and URL.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

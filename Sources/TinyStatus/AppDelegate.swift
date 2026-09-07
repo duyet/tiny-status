@@ -267,6 +267,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
+        viewMenu.addItem(.separator())
+        let cols = NSMenuItem(title: "Columns", action: nil, keyEquivalent: "")
+        let colsMenu = NSMenu()
+        for col in Store.tableColumns {
+            let i = NSMenuItem(title: col.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = col.id
+            colsMenu.addItem(i)
+        }
+        cols.submenu = colsMenu
+        viewMenu.addItem(cols)
+        let sort = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
+        let sortMenu = NSMenu()
+        for (id, title) in [("", "Manual"), ("name", "Check"), ("kind", "Type"), ("status", "Status"), ("tags", "Tags"), ("latency", "Latency"), ("version", "Version"), ("target", "Target")] {
+            let i = NSMenuItem(title: title, action: #selector(setSort(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = id
+            sortMenu.addItem(i)
+        }
+        sort.submenu = sortMenu
+        viewMenu.addItem(sort)
+        let filter = NSMenuItem(title: "Filter Status", action: nil, keyEquivalent: "")
+        let filterMenu = NSMenu()
+        for (id, title) in [("all", "All"), ("up", "Up"), ("degraded", "Degraded"), ("down", "Down")] {
+            let i = NSMenuItem(title: title, action: #selector(setFilter(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = id
+            filterMenu.addItem(i)
+        }
+        filter.submenu = filterMenu
+        viewMenu.addItem(filter)
         viewItem.submenu = viewMenu
         menubar.addItem(viewItem)
         let winItem = NSMenuItem()
@@ -276,6 +307,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menubar.addItem(winItem)
         NSApp.mainMenu = menubar
     }
+
+    @objc func toggleColumn(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let on = Store.shared.hiddenColumns.contains(id)
+        Store.shared.columnVisible(id).wrappedValue = on
+    }
+
+    @objc func setSort(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let s = Store.shared
+        if s.sortKey == id, !id.isEmpty {
+            s.sortAscending.toggle()
+        } else {
+            s.sortKey = id
+            s.sortAscending = true
+        }
+        s.persistTablePrefs()
+    }
+
+    @objc func setFilter(_ sender: NSMenuItem) {
+        Store.shared.filterStatus = sender.representedObject as? String ?? "all"
+        Store.shared.persistTablePrefs()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let s = Store.shared
+        if menuItem.action == #selector(toggleColumn(_:)), let id = menuItem.representedObject as? String {
+            menuItem.state = s.hiddenColumns.contains(id) ? .off : .on
+        }
+        if menuItem.action == #selector(setSort(_:)), let id = menuItem.representedObject as? String {
+            menuItem.state = s.sortKey == id ? .on : .off
+        }
+        if menuItem.action == #selector(setFilter(_:)), let id = menuItem.representedObject as? String {
+            menuItem.state = s.filterStatus == id ? .on : .off
+        }
+        return true
+    }
 }
 
 final class ToolbarShim: NSObject, NSToolbarDelegate {
@@ -284,11 +352,11 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
     weak var status: StatusController?
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .flexibleSpace, .reload, .settings]
+        [.search, .filter, .flexibleSpace, .columns, .reload, .settings]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .flexibleSpace, .reload, .settings]
+        [.search, .filter, .flexibleSpace, .columns, .reload, .settings]
     }
 
     func toolbar(
@@ -300,7 +368,28 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
         case .search:
             let i = NSSearchToolbarItem(itemIdentifier: .search)
             if let f = status?.search { i.searchField = f }
-            i.toolTip = "Filter checks"
+            i.toolTip = "Filter by name, tag, type, or URL"
+            return i
+        case .filter:
+            let i = NSMenuToolbarItem(itemIdentifier: .filter)
+            i.label = "Status"
+            i.toolTip = "Filter by status"
+            i.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter")
+            let m = NSMenu()
+            for (id, title) in [("all", "All"), ("up", "Up"), ("degraded", "Degraded"), ("down", "Down")] {
+                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setFilter(_:)), keyEquivalent: "")
+                it.target = delegate
+                it.representedObject = id
+                m.addItem(it)
+            }
+            i.menu = m
+            return i
+        case .columns:
+            let i = NSMenuToolbarItem(itemIdentifier: .columns)
+            i.label = "Columns"
+            i.toolTip = "Show or hide columns"
+            i.image = NSImage(systemSymbolName: "tablecells", accessibilityDescription: "Columns")
+            i.menu = status?.columnMenu() ?? NSMenu()
             return i
         case .reload:
             let i = NSToolbarItem(itemIdentifier: .reload)
@@ -330,4 +419,6 @@ extension NSToolbarItem.Identifier {
     static let reload = NSToolbarItem.Identifier("reload")
     static let settings = NSToolbarItem.Identifier("settings")
     static let search = NSToolbarItem.Identifier("search")
+    static let filter = NSToolbarItem.Identifier("filter")
+    static let columns = NSToolbarItem.Identifier("columns")
 }

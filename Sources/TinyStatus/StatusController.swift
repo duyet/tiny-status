@@ -171,7 +171,16 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     func reload() {
         applyDensity()
-        UserDefaults.standard.set(store.editDensity, forKey: "TinyStatus.density")
+        applyHiddenColumns()
+        if store.sortKey.isEmpty {
+            table.sortDescriptors = []
+        } else {
+            let cur = table.sortDescriptors.first
+            if cur?.key != store.sortKey || cur?.ascending != store.sortAscending {
+                table.sortDescriptors = [NSSortDescriptor(key: store.sortKey, ascending: store.sortAscending)]
+            }
+        }
+        store.persistTablePrefs()
         let keep = expandedIds()
         var items: [Node] = []
         for t in store.tunnels {
@@ -200,18 +209,13 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         if !fitting { userResized = true }
     }
 
-    private var hiddenCols: Set<String> {
-        get { Set(UserDefaults.standard.stringArray(forKey: "TinyStatus.hiddenColumns") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue), forKey: "TinyStatus.hiddenColumns") }
-    }
-
-    private func columnMenu() -> NSMenu {
+    func columnMenu() -> NSMenu {
         let m = NSMenu(title: "Columns")
         for col in Col.allCases where col.optional {
             let i = NSMenuItem(title: col.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
             i.target = self
             i.representedObject = col.rawValue
-            i.state = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(col.rawValue))?.isHidden == false ? .on : .off
+            i.state = store.hiddenColumns.contains(col.rawValue) ? .off : .on
             m.addItem(i)
         }
         m.addItem(.separator())
@@ -222,14 +226,11 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     @objc private func toggleColumn(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(raw))
-        else { return }
-        c.isHidden.toggle()
-        var h = hiddenCols
-        if c.isHidden { h.insert(raw) } else { h.remove(raw) }
-        hiddenCols = h
+        guard let raw = sender.representedObject as? String else { return }
+        let show = store.hiddenColumns.contains(raw)
+        store.columnVisible(raw).wrappedValue = show
         userResized = false
+        applyHiddenColumns()
         sizeColumnsToContent()
         table.headerView?.menu = columnMenu()
     }
@@ -240,7 +241,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     private func applyHiddenColumns() {
-        let hidden = hiddenCols
+        let hidden = store.hiddenColumns
         for col in Col.allCases where col.optional {
             table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(col.rawValue))?.isHidden = hidden.contains(col.rawValue)
         }
@@ -262,48 +263,29 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         var groupW: CGFloat = textW("Group", header) + 20
         var latW: CGFloat = textW("Latency", header) + 20
         var verW: CGFloat = textW("Version", header) + 20
-        var kinds = Set<String>()
-        var hasTags = false
-        var hasVersion = false
-        var hasGroup = false
         func walk(_ nodes: [Node], level: Int) {
             for n in nodes {
                 nameW = max(nameW, 28 + CGFloat(level) * table.indentationPerLevel + 18 + textW(n.title, n.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : body) + 12)
                 if n.kind != "info" && n.kind != "group" {
-                    kinds.insert(n.kind)
                     kindW = max(kindW, textW(n.kind, small) + 20)
                 }
                 if !n.tags.isEmpty, n.kind != "group", n.kind != "info" {
-                    hasTags = true
                     tagsW = max(tagsW, textW(n.tags.joined(separator: "  "), tagsFont) + 20)
                 }
                 if !n.group.isEmpty, n.kind != "group", n.kind != "info" {
-                    hasGroup = true
                     groupW = max(groupW, textW(n.group, small) + 20)
                 }
                 if !n.latency.isEmpty {
                     latW = max(latW, textW(n.latency, .monospacedDigitSystemFont(ofSize: 12, weight: .regular)) + 20)
                 }
                 if !n.version.isEmpty {
-                    hasVersion = true
                     verW = max(verW, textW(n.version, small) + 20)
                 }
                 walk(n.children, level: level + 1)
             }
         }
         walk(roots, level: 0)
-        let userHide = hiddenCols
-        func hide(_ id: Col, auto: Bool) {
-            guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)) else { return }
-            c.isHidden = userHide.contains(id.rawValue) || auto
-        }
-        hide(.kind, auto: kinds.count < 2)
-        hide(.tags, auto: !hasTags)
-        hide(.group, auto: store.groupBy == .tag || !hasGroup)
-        hide(.version, auto: !hasVersion)
-        hide(.history, auto: false)
-        hide(.latency, auto: false)
-        hide(.target, auto: false)
+        applyHiddenColumns()
         if userResized { return }
         func set(_ id: Col, _ w: CGFloat) {
             guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)), !c.isHidden else { return }
@@ -322,17 +304,25 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     private func matches(_ n: Node) -> Bool {
+        if n.kind == "info" { return false }
+        if n.children.contains(where: matches) { return true }
+        switch store.filterStatus {
+        case "up":
+            if !(n.ok && !n.warn) || n.kind == "group" { return false }
+        case "down":
+            if n.ok || n.kind == "group" { return false }
+        case "degraded":
+            if !n.warn || n.kind == "group" { return false }
+        default: break
+        }
         if filter.isEmpty { return true }
-        if n.title.lowercased().contains(filter)
+        return n.title.lowercased().contains(filter)
             || n.kind.lowercased().contains(filter)
             || n.target.lowercased().contains(filter)
             || n.status.lowercased().contains(filter)
             || n.tags.contains(where: { $0.lowercased().contains(filter) })
             || n.group.lowercased().contains(filter)
-        {
-            return true
-        }
-        return n.children.contains(where: matches)
+            || n.version.lowercased().contains(filter)
     }
 
     private func grouped(_ items: [Node]) -> [Node] {
@@ -554,6 +544,13 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     func outlineView(_ outlineView: NSOutlineView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        if let d = outlineView.sortDescriptors.first {
+            store.sortKey = d.key ?? ""
+            store.sortAscending = d.ascending
+        } else {
+            store.sortKey = ""
+        }
+        store.persistTablePrefs()
         let keep = expandedIds()
         roots = sortNodes(roots)
         table.reloadData()
