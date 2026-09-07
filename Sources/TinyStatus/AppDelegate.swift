@@ -108,29 +108,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildStatusMenu() {
         let s = Store.shared
         let m = NSMenu()
-        let summary = NSMenuItem(title: s.healthCheckTotal == 0 ? "No health checks yet" : s.healthCheckSummary, action: nil, keyEquivalent: "")
-        summary.isEnabled = false
-        m.addItem(summary)
-        if s.tunnels.count + s.deploys.count > 0 {
-            m.addItem(.separator())
-            for t in s.tunnels {
-                let title = "\(t.up ? "●" : "○")  \(t.title)"
-                m.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+        m.autoenablesItems = false
+        let head = NSMenuItem.sectionHeader(
+            title: s.healthCheckTotal == 0 ? "No health checks yet" : s.healthCheckSummary
+        )
+        m.addItem(head)
+        for t in s.tunnels {
+            m.addItem(statusRow(
+                title: t.title,
+                ok: t.up,
+                warn: false,
+                suffix: t.ms.map { String(format: "%.0f ms", $0) } ?? ""
+            ))
+        }
+        for d in s.deploys {
+            let extra = d.checks.isEmpty ? "" : "\(d.okCount)/\(d.checks.count)"
+            let row = statusRow(
+                title: d.title,
+                ok: d.health == "healthy",
+                warn: d.health == "degraded",
+                suffix: extra
+            )
+            if !d.checks.isEmpty {
+                let sub = NSMenu()
+                sub.autoenablesItems = false
+                for c in d.checks {
+                    sub.addItem(statusRow(
+                        title: c.name,
+                        ok: c.status == "healthy",
+                        warn: c.status == "degraded",
+                        suffix: c.ms.map { String(format: "%.0f ms", $0) } ?? ""
+                    ))
+                }
+                row.submenu = sub
             }
-            for d in s.deploys {
-                let mark = d.health == "healthy" ? "●" : d.health == "degraded" ? "◐" : "○"
-                let extra = d.checks.isEmpty ? "" : "  \(d.okCount)/\(d.checks.count)"
-                m.addItem(NSMenuItem(title: "\(mark)  \(d.title)\(extra)", action: nil, keyEquivalent: ""))
-            }
+            m.addItem(row)
         }
         m.addItem(.separator())
-        m.addItem(withTitle: "Open TinyStatus", action: #selector(showMain), keyEquivalent: "")
-        m.addItem(withTitle: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
-        m.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        let open = NSMenuItem(title: "Open TinyStatus", action: #selector(showMain), keyEquivalent: "")
+        open.target = self
+        open.isEnabled = true
+        m.addItem(open)
+        let reload = NSMenuItem(title: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
+        reload.target = self
+        reload.isEnabled = true
+        m.addItem(reload)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        settings.isEnabled = true
+        m.addItem(settings)
         m.addItem(.separator())
-        m.addItem(withTitle: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        for it in m.items where it.action != nil { it.target = self }
+        let quit = NSMenuItem(title: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.target = NSApp
+        quit.isEnabled = true
+        m.addItem(quit)
         statusItem?.menu = m
+    }
+
+    private func statusRow(title: String, ok: Bool, warn: Bool, suffix: String) -> NSMenuItem {
+        let label = suffix.isEmpty ? title : "\(title)    \(suffix)"
+        let item = NSMenuItem(title: label, action: #selector(showMain), keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        let name = warn ? "exclamationmark.circle.fill" : ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+        let color: NSColor = warn ? .systemOrange : ok ? .systemGreen : .systemRed
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: title)
+        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        item.image = img?.withSymbolConfiguration(cfg)
+        item.image?.isTemplate = false
+        return item
     }
 
     private func makeToolbar() -> NSToolbar {
