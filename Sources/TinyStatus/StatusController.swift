@@ -147,8 +147,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         for n in roots {
             if keep.contains(n.id) || !filter.isEmpty { table.expandItem(n, expandChildren: !filter.isEmpty) }
         }
-        let up = all.filter(\.ok).count
-        view.window?.subtitle = all.isEmpty ? "" : "\(up) of \(all.count) up · \(store.lastCheckedLabel)"
+        view.window?.subtitle = all.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
     }
 

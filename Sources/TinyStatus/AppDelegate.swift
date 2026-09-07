@@ -25,7 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func setStatus(ok: Bool) {
         let name = ok ? "checkmark.circle.fill" : "xmark.circle.fill"
         statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "TinyStatus")
-        statusItem?.button?.toolTip = ok ? "All checks OK" : "Something is down"
+        let s = Store.shared
+        statusItem?.button?.toolTip = "\(s.healthCheckSummary)\(ok ? "" : " — something is down")"
     }
 
     @objc func showMain() {

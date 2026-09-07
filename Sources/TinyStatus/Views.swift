@@ -352,7 +352,7 @@ struct ConfigWindow: View {
             } header: {
                 Label("Checks (\(store.allChecks().count))", systemImage: "list.bullet")
             } footer: {
-                Text("Click a check to see config and the last live probe. Edit JSON below to change fields, then Save.")
+                Text("\(store.healthCheckSummary). Nested services from each health JSON are included. Click a check for config and the last probe.")
             }
             Section {
                 TextField("Poll seconds", value: $store.editPollSeconds, format: .number)
@@ -567,6 +567,10 @@ struct Panel: View {
         NavigationStack {
             List {
                 Section {
+                    LabeledContent("Health checks") {
+                        Text("\(store.healthCheckUp) of \(store.healthCheckTotal)")
+                            .monospacedDigit()
+                    }
                     LabeledContent("Tunnels") {
                         Text("\(store.tunnelsUp) of \(store.tunnels.count)")
                             .monospacedDigit()

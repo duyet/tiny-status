@@ -65,6 +65,20 @@ final class Store: ObservableObject {
     var barColor: Color { allOK ? .green : .red }
 
     var tunnelsUp: Int { tunnels.filter(\.up).count }
+    /// Every live probe: each TCP check plus each nested health-JSON service (or the deploy itself if none yet).
+    var healthCheckTotal: Int {
+        tunnels.count + deploys.reduce(0) { $0 + max($1.checks.count, 1) }
+    }
+    var healthCheckUp: Int {
+        tunnels.filter(\.up).count
+            + deploys.reduce(0) { acc, d in
+                if d.checks.isEmpty { return acc + (d.up ? 1 : 0) }
+                return acc + d.checks.filter { $0.status == "healthy" }.count
+            }
+    }
+    var healthCheckSummary: String {
+        "\(healthCheckUp) of \(healthCheckTotal) health checks up"
+    }
     var healthyDeploys: Int { deploys.filter { $0.health == "healthy" }.count }
     var degradedDeploys: Int { deploys.filter { $0.health == "degraded" }.count }
     var downDeploys: Int { deploys.filter { $0.health != "healthy" && $0.health != "degraded" && $0.health != "…" }.count }
