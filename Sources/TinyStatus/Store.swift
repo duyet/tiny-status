@@ -35,6 +35,15 @@ final class Store: ObservableObject {
         if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
     }
 
+    func expandBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { self.expanded.contains(id) },
+            set: { on in
+                if on { self.expanded.insert(id) } else { self.expanded.remove(id) }
+            }
+        )
+    }
+
     var lastCheckedLabel: String {
         guard let d = lastChecked else { return "Not checked yet" }
         let abs = d.formatted(date: .omitted, time: .standard)

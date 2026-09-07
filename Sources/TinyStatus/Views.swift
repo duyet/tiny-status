@@ -39,30 +39,8 @@ enum Palette {
 }
 
 struct Card<Content: View>: View {
-    var accent: Color = .clear
     @ViewBuilder var content: Content
-    var body: some View {
-        content
-            .padding(10)
-            .padding(.leading, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(accent.opacity(0.10))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(accent.opacity(0.45), lineWidth: 1)
-            }
-            .overlay(alignment: .leading) {
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 12, bottomLeadingRadius: 12,
-                    bottomTrailingRadius: 0, topTrailingRadius: 0
-                )
-                .fill(accent)
-                .frame(width: 4)
-            }
-    }
+    var body: some View { content }
 }
 
 struct Mark: View {
@@ -248,10 +226,10 @@ struct VersionBar: View {
             Image(systemName: icon).imageScale(.small)
             Text(value).font(.caption2.monospaced())
         }
-        .padding(.horizontal, 5)
+        .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background((ok ? Color.green : tint).opacity(0.18), in: Capsule())
-        .foregroundStyle(ok ? Color.green : tint)
+        .background(.quaternary.opacity(0.5), in: Capsule())
+        .foregroundStyle(ok ? Color.primary : Color.secondary)
         .help("\(tip)\n\(value)\(ok ? " — matches" : " — drift")")
     }
 }
@@ -458,214 +436,154 @@ struct ConfigWindow: View {
     }
 }
 
-struct Overview: View {
-    @ObservedObject var store: Store
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Overview", systemImage: "square.grid.2x2.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(store.lastCheckedLabel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            HStack(spacing: 6) {
-                MetricChip(
-                    icon: "network",
-                    title: "Tunnels",
-                    value: "\(store.tunnelsUp)/\(store.tunnels.count)",
-                    color: store.tunnelsUp == store.tunnels.count && !store.tunnels.isEmpty ? .green : Palette.gitlab
-                )
-                MetricChip(
-                    icon: "checkmark.seal.fill",
-                    title: "Healthy",
-                    value: "\(store.healthyDeploys)/\(store.deploys.count)",
-                    color: .green
-                )
-                MetricChip(
-                    icon: "exclamationmark.triangle.fill",
-                    title: "Degraded",
-                    value: "\(store.degradedDeploys)",
-                    color: store.degradedDeploys == 0 ? .green : .orange
-                )
-                MetricChip(
-                    icon: "xmark.octagon.fill",
-                    title: "Down",
-                    value: "\(store.downDeploys)",
-                    color: store.downDeploys == 0 ? .green : .red
-                )
-                MetricChip(
-                    icon: "arrow.left.arrow.right",
-                    title: "Drift",
-                    value: "\(store.driftDeploys)",
-                    color: store.driftDeploys == 0 ? .green : Palette.deploy
-                )
-            }
-            HStack(spacing: 8) {
-                ForEach(regionGroups(store.deploys)) { g in
-                    let ok = g.items.filter { $0.health == "healthy" }.count
-                    HStack(spacing: 4) {
-                        Circle().fill(Palette.region(g.key)).frame(width: 7, height: 7)
-                        Text(g.key).font(.caption2.weight(.semibold))
-                        Text("\(ok)/\(g.items.count)")
-                            .font(.caption2.monospaced())
-                    }
-                    .foregroundStyle(Palette.region(g.key))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Palette.region(g.key).opacity(0.12), in: Capsule())
-                    .help("\(g.key): \(ok) of \(g.items.count) healthy")
-                }
-                Spark(values: store.fleetSpark, wide: true)
-                    .help("Average health across all apps")
-            }
-        }
-        .padding(10)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
 struct Panel: View {
     @ObservedObject var store: Store
 
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    Overview(store: store)
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("Tunnels") {
+                        Text("\(store.tunnelsUp) of \(store.tunnels.count)")
+                            .monospacedDigit()
+                    }
+                    LabeledContent("Healthy") {
+                        Text("\(store.healthyDeploys) of \(store.deploys.count)")
+                            .monospacedDigit()
+                    }
+                    if store.degradedDeploys > 0 {
+                        LabeledContent("Degraded") {
+                            Text("\(store.degradedDeploys)").foregroundStyle(.orange).monospacedDigit()
+                        }
+                    }
+                    if store.downDeploys > 0 {
+                        LabeledContent("Down") {
+                            Text("\(store.downDeploys)").foregroundStyle(.red).monospacedDigit()
+                        }
+                    }
+                    if store.driftDeploys > 0 {
+                        LabeledContent("Version drift") {
+                            Text("\(store.driftDeploys)").monospacedDigit()
+                        }
+                    }
+                    if store.fleetSpark.count > 1 {
+                        HStack {
+                            Text("Fleet")
+                            Spark(values: store.fleetSpark, wide: true)
+                        }
+                        .help("Average health across apps")
+                    }
+                } header: {
+                    Text("Overview")
+                }
+
+                Section("Tunnels") {
                     ForEach(store.tunnels) { row in
                         TunnelCard(row: row)
                     }
-                    ForEach(regionGroups(store.deploys)) { group in
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack(spacing: 6) {
-                                Circle().fill(Palette.region(group.key)).frame(width: 8, height: 8)
-                                    .help("\(group.key) region")
-                                Label(group.key, systemImage: regionIcon(group.key))
-                                    .font(.caption.weight(.semibold))
-                                    .help("\(group.key): deployments in this region")
-                            }
-                            .foregroundStyle(Palette.region(group.key))
-                            .padding(.top, 4)
-                            LazyVGrid(
-                                columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
-                                spacing: 8
-                            ) {
-                                ForEach(group.items) { d in
-                                    DeployCard(d: d)
-                                }
-                            }
+                }
+
+                ForEach(regionGroups(store.deploys)) { group in
+                    Section(group.key) {
+                        ForEach(group.items) { d in
+                            DeployCard(d: d)
                         }
                     }
                 }
-                .padding(10)
             }
-            Divider()
-            HStack(spacing: 8) {
-                Image(systemName: "clock")
-                    .foregroundStyle(.secondary)
-                    .imageScale(.small)
-                    .help("Time of the last poll")
-                Text(store.lastCheckedLabel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Mark(ok: store.allOK)
-                IconBtn(system: "gearshape", help: "Settings") { store.openConfigWindow() }
-                IconBtn(system: "arrow.clockwise", help: "Reload") { store.load(); store.poll() }
-                IconBtn(system: "xmark.circle", help: "Quit") { NSApp.terminate(nil) }
+            .listStyle(.inset)
+            .toolbar {
+                ToolbarItem(placement: .status) {
+                    Text(store.lastCheckedLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Time of the last poll")
+                }
+                ToolbarItem {
+                    Button {
+                        store.load()
+                        store.poll()
+                    } label: {
+                        Label("Reload", systemImage: "arrow.clockwise")
+                    }
+                    .help("Reload")
+                }
+                ToolbarItem {
+                    Button {
+                        store.openConfigWindow()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    .help("Settings")
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(.bar)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 560, minHeight: 480)
+        .frame(minWidth: 520, minHeight: 480)
     }
 }
 
 struct TunnelCard: View {
     var row: TunnelRow
     @ObservedObject var store = Store.shared
-    var open: Bool { store.expanded.contains(row.id) }
+
     var body: some View {
-        Card(accent: Palette.gitlab) {
+        DisclosureGroup(isExpanded: store.expandBinding(row.id)) {
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Button { store.toggleExpand(row.id) } label: {
-                        HStack(spacing: 8) {
-                            BrandIcon(title: row.title)
-                            Text(row.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.gitlab)
-                            Text(row.port.map { "\(row.host):\($0)" } ?? "")
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(open ? 90 : 0))
-                                .help(open ? "Collapse details" : "Expand: port, pid, uptime, ssh command")
-                            Spacer(minLength: 4)
-                            Mark(
-                                ok: row.up && !row.busy,
-                                label: row.up ? "Tunnel is listening" : "Nothing is listening on this port"
-                            )
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+                LabeledContent("Listen") {
+                    Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
+                        .font(.body.monospaced())
+                        .textSelection(.enabled)
+                }
+                LabeledContent("State") {
+                    Text(row.up ? "Listening" : "Not listening")
+                }
+                if let proc = row.process {
+                    LabeledContent("Process") { Text(proc) }
+                }
+                if let pid = row.pid {
+                    LabeledContent("PID") { Text(pid).monospacedDigit() }
+                }
+                if let e = row.elapsed {
+                    LabeledContent("Up") { Text(e) }
+                }
+                if let cmd = row.command {
+                    Text(cmd)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                HStack {
                     if row.up {
                         if row.canStop {
-                            IconBtn(system: "pause.circle", help: "Disconnect") {
-                                store.runTunnel(row.id, kind: .stop)
-                            }
+                            Button("Disconnect") { store.runTunnel(row.id, kind: .stop) }
                         }
                         if row.canOpen {
-                            IconBtn(system: "safari", help: "Open") {
-                                store.runTunnel(row.id, kind: .open)
-                            }
+                            Button("Open") { store.runTunnel(row.id, kind: .open) }
                         }
                     } else if row.canStart {
-                        IconBtn(system: "link", help: "Connect") {
-                            store.runTunnel(row.id, kind: .start)
-                        }
+                        Button("Connect") { store.runTunnel(row.id, kind: .start) }
                     }
                 }
-                if open {
-                    HStack(spacing: 6) {
-                        Image(systemName: "network").foregroundStyle(.secondary).imageScale(.small)
-                            .help("Local listen address")
-                        Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
+                .controlSize(.small)
+            }
+            .padding(.vertical, 4)
+        } label: {
+            Label {
+                HStack {
+                    Text(row.title)
+                    Spacer()
+                    if let port = row.port {
+                        Text("\(row.host):\(port)")
                             .font(.caption.monospaced())
-                        if row.up {
-                            Text("listening").font(.caption2).foregroundStyle(.green)
-                        } else {
-                            Text("nothing listening").font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                    if row.up {
-                        HStack(spacing: 6) {
-                            Image(systemName: "terminal").foregroundStyle(.secondary).imageScale(.small)
-                                .help("Process holding the port (often ssh)")
-                            Text(row.process ?? "process")
-                            if let pid = row.pid { Text("pid \(pid)").foregroundStyle(.secondary) }
-                            if let e = row.elapsed { Text("up \(e)").foregroundStyle(.secondary) }
-                        }
-                        .font(.caption2)
-                        if let cmd = row.command {
-                            Text(cmd)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .lineLimit(4)
-                                .textSelection(.enabled)
-                        }
-                    } else {
-                        Text("Start a local forward to this port, or tap Connect if a start command is configured.")
-                            .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    Mark(
+                        ok: row.up && !row.busy,
+                        label: row.up ? "Tunnel is listening" : "Nothing is listening on this port"
+                    )
                 }
+            } icon: {
+                BrandIcon(title: row.title)
             }
         }
     }
@@ -674,114 +592,57 @@ struct TunnelCard: View {
 struct DeployCard: View {
     var d: DeployRow
     @ObservedObject var store = Store.shared
-    var open: Bool { store.expanded.contains(d.id) }
+
     var body: some View {
-        Card(accent: Palette.region(d.title)) {
-            VStack(alignment: .leading, spacing: 6) {
-                Button { store.toggleExpand(d.id) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
-                            .foregroundStyle(Palette.region(d.title))
-                            .frame(width: 14)
-                            .help(d.title.lowercased().contains("prod") ? "Production" : "Development")
-                        Text(envLabel(d.title))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Palette.region(d.title))
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(open ? 90 : 0))
-                            .help(open ? "Collapse details" : "Expand: health, versions, checks")
-                        Spacer(minLength: 2)
-                        if !open { Spark(values: d.spark) }
-                        Mark(
-                            ok: d.up,
-                            warn: d.health == "degraded",
-                            label: "Overall health: \(d.health)"
-                        )
+        DisclosureGroup(isExpanded: store.expandBinding(d.id)) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    LabeledContent("Health") { Text(d.health) }
+                    LabeledContent("Checks") {
+                        Text("\(d.okCount)/\(d.checks.count)").monospacedDigit()
                     }
-                    .contentShape(Rectangle())
+                    LabeledContent("Avg") {
+                        Text(d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—")
+                            .monospacedDigit()
+                    }
+                    if let u = d.uptime {
+                        LabeledContent("Uptime") {
+                            Text(String(format: "%.1fs", u)).monospacedDigit()
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                if !open {
-                    CheckDots(checks: d.checks)
+                .font(.caption)
+                if d.spark.count > 1 {
+                    Spark(values: d.spark, wide: true)
                 }
-                if open {
-                    HStack(spacing: 6) {
-                        MetricChip(
-                            icon: "heart.fill",
-                            title: "Health",
-                            value: d.health,
-                            color: Palette.health(d.health)
-                        )
-                        MetricChip(
-                            icon: "checkmark.circle",
-                            title: "Checks",
-                            value: "\(d.okCount)/\(max(d.checks.count, 0))",
-                            color: d.okCount == d.checks.count && !d.checks.isEmpty ? .green : .orange
-                        )
-                        MetricChip(
-                            icon: "speedometer",
-                            title: "Avg latency",
-                            value: d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—",
-                            color: Palette.app
-                        )
-                        MetricChip(
-                            icon: "clock",
-                            title: "Uptime",
-                            value: d.uptime.map { String(format: "%.1fs", $0) } ?? "—",
-                            color: Palette.pod
-                        )
+                if d.checks.contains(where: { $0.ms != nil }) {
+                    LatencyChart(checks: d.checks)
+                }
+                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
+                LabeledContent("App live") { Text(d.liveVersion).font(.caption.monospaced()) }
+                LabeledContent("k8s deploy") { Text(d.k8sVersion).font(.caption.monospaced()) }
+                LabeledContent("k8s live") { Text(d.k8sLiveVersion).font(.caption.monospaced()) }
+                ForEach(d.checks) { c in
+                    LabeledContent(c.name) {
+                        Text(c.ms.map { "\(c.status) · \(String(format: "%.0f ms", $0))" } ?? c.status)
+                            .foregroundStyle(Palette.health(c.status))
                     }
-                    if d.spark.count > 1 {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Health history")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spark(values: d.spark, wide: true)
-                        }
-                    }
-                    if d.checks.contains(where: { $0.ms != nil }) {
-                        LatencyChart(checks: d.checks)
-                    }
-                    VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
-                    Line(
-                        icon: "chevron.left.forwardslash.chevron.right",
-                        label: "App live",
-                        value: d.liveVersion,
-                        ok: d.up
-                    )
-                    Line(
-                        icon: "shippingbox",
-                        label: "k8s deploy",
-                        value: d.k8sVersion,
-                        ok: d.k8sVersion != "—" && d.k8sVersion == d.k8sLiveVersion
-                    )
-                    Line(
-                        icon: "memorychip",
-                        label: "k8s live",
-                        value: d.k8sLiveVersion,
-                        ok: d.k8sLiveVersion != "—" && d.k8sLiveVersion == d.liveVersion
-                    )
-                    if !d.checks.isEmpty {
-                        ForEach(d.checks) { c in
-                            Line(
-                                icon: checkIcon(c.name),
-                                label: c.name,
-                                value: c.ms.map { "\(c.status)  \(String(format: "%.0f ms", $0))" } ?? c.status,
-                                ok: c.status == "healthy",
-                                warn: c.status == "degraded"
-                            )
-                        }
-                    }
-                    if let url = d.openUrl {
-                        Button { store.openURL(url) } label: {
-                            Label("Open health", systemImage: "arrow.up.right.square")
-                        }
-                        .buttonStyle(.bordered)
+                }
+                if let url = d.openUrl {
+                    Button("Open health") { store.openURL(url) }
                         .controlSize(.small)
-                    }
                 }
+            }
+            .padding(.vertical, 4)
+        } label: {
+            HStack {
+                Text(envLabel(d.title))
+                Spacer()
+                if !store.expanded.contains(d.id) {
+                    CheckDots(checks: d.checks)
+                    Spark(values: d.spark)
+                }
+                Mark(ok: d.up, warn: d.health == "degraded", label: "Overall health: \(d.health)")
             }
         }
     }
