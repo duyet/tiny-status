@@ -23,10 +23,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setStatus(ok: Bool) {
-        let name = ok ? "checkmark.circle.fill" : "xmark.circle.fill"
-        statusItem?.button?.image = NSImage(systemSymbolName: name, accessibilityDescription: "TinyStatus")
         let s = Store.shared
-        statusItem?.button?.toolTip = "\(s.healthCheckSummary)\(ok ? "" : " — something is down")"
+        let name = s.healthCheckTotal == 0
+            ? "ellipsis.circle.fill"
+            : ok ? "checkmark.circle.fill" : "xmark.circle.fill"
+        let img = NSImage(systemSymbolName: name, accessibilityDescription: "TinyStatus")
+        img?.isTemplate = true
+        statusItem?.button?.image = img
+        statusItem?.button?.imagePosition = .imageLeading
+        statusItem?.button?.title = s.healthCheckTotal == 0 ? "" : "\(s.healthCheckUp)/\(s.healthCheckTotal)"
+        statusItem?.button?.toolTip = s.healthCheckSummary
+        rebuildStatusMenu()
     }
 
     @objc func showMain() {
@@ -88,12 +95,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "ellipsis.circle.fill", accessibilityDescription: "TinyStatus")
-        item.button?.action = #selector(showMain)
-        item.button?.target = self
+        item.button?.image?.isTemplate = true
+        item.button?.imagePosition = .imageLeading
         statusItem = item
+        rebuildStatusMenu()
         setStatus(ok: Store.shared.allOK)
+    }
+
+    private func rebuildStatusMenu() {
+        let s = Store.shared
+        let m = NSMenu()
+        let summary = NSMenuItem(title: s.healthCheckTotal == 0 ? "No health checks yet" : s.healthCheckSummary, action: nil, keyEquivalent: "")
+        summary.isEnabled = false
+        m.addItem(summary)
+        if s.tunnels.count + s.deploys.count > 0 {
+            m.addItem(.separator())
+            for t in s.tunnels {
+                let title = "\(t.up ? "●" : "○")  \(t.title)"
+                m.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+            }
+            for d in s.deploys {
+                let mark = d.health == "healthy" ? "●" : d.health == "degraded" ? "◐" : "○"
+                let extra = d.checks.isEmpty ? "" : "  \(d.okCount)/\(d.checks.count)"
+                m.addItem(NSMenuItem(title: "\(mark)  \(d.title)\(extra)", action: nil, keyEquivalent: ""))
+            }
+        }
+        m.addItem(.separator())
+        m.addItem(withTitle: "Open TinyStatus", action: #selector(showMain), keyEquivalent: "")
+        m.addItem(withTitle: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
+        m.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        m.addItem(.separator())
+        m.addItem(withTitle: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        for it in m.items where it.action != nil { it.target = self }
+        statusItem?.menu = m
     }
 
     private func makeToolbar() -> NSToolbar {
