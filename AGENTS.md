@@ -35,4 +35,5 @@ Menu bar + window. Import paste should infer kind. Do not show raw secrets. Keep
 - MIT. No Co-Authored-By.
 - No secrets, tokens, private IPs, employer names, or real cluster names.
 - Semantic commits if asked to commit. Do not commit unless asked.
+- **release-please:** versions stay on `v0.1.x` (`versioning: always-bump-patch`). Changelog is `CHANGELOG.md`. **Never auto-merge** `release-please--*` PRs (`chore(main): release …`). Leave them for the human to merge.
 - Docs live in `README.md`, this file, `docs/plan.md`.

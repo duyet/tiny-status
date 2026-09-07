@@ -12,7 +12,7 @@ Paste a domain, IP, `host:port`, Tailscale name, or JSON. TinyStatus infers the 
 
 Menu bar icon (green / red), a small window, sparkline, notifications. Settings include git backup of your config.
 
-Requires **macOS 26+**. AppKit / Swift.
+Requires **macOS 26+**. AppKit / Swift. Version **v0.1.x** (patch-only). See [CHANGELOG.md](CHANGELOG.md).
 
 ## Install and run
 
@@ -23,6 +23,8 @@ make run
 ```
 
 `make app` builds `TinyStatus.app`. `make run` builds and opens it.
+
+Releases: conventional commits on `main` open a **release-please** PR that bumps **0.1.x** only, updates `CHANGELOG.md` and `Info.plist`. Merge that PR by hand (never `--auto`).
 
 ## Config
 
