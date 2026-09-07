@@ -68,11 +68,13 @@ struct Card<Content: View>: View {
 struct Mark: View {
     var ok: Bool
     var warn: Bool = false
+    var label: String? = nil
     var body: some View {
         Image(systemName: warn ? "exclamationmark.circle.fill" : ok ? "checkmark.circle.fill" : "xmark.circle.fill")
             .foregroundStyle(warn ? Color.orange : ok ? Color.green : Color.red)
             .imageScale(.small)
             .symbolRenderingMode(.hierarchical)
+            .help(label ?? (warn ? "Degraded" : ok ? "OK" : "Down"))
     }
 }
 
@@ -102,6 +104,7 @@ struct Line: View {
                 .foregroundStyle(warn ? Color.orange : ok ? Color.green : Color.red)
                 .frame(width: 12)
                 .imageScale(.small)
+                .help("\(label): \(value)")
             Text(label)
             Spacer(minLength: 6)
             Text(value)
@@ -136,6 +139,7 @@ struct Spark: View {
             ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
         }
         .frame(width: 56, height: 16)
+        .help("Health over the last \(max(values.count, 0)) checks (green up, orange degraded, red down)")
         .accessibilityLabel("Health history")
     }
 
@@ -159,7 +163,7 @@ struct CheckDots: View {
                         c.status == "healthy" ? Color.green
                             : c.status == "degraded" ? Color.orange : Color.red
                     )
-                    .help("\(c.name): \(c.status)")
+                    .help("\(c.name): \(c.status)\n\(checkHint(c.name))")
             }
         }
     }
@@ -171,13 +175,16 @@ struct VersionBar: View {
     var live: String
     var body: some View {
         HStack(spacing: 4) {
-            pill("iphone", app, Palette.app, deploy == app && live == app)
-            pill("shippingbox", deploy, Palette.deploy, deploy == live)
-            pill("memorychip", live, Palette.pod, live == app)
+            pill("iphone", app, Palette.app, deploy == app && live == app,
+                 "App live: version from HTTP /health")
+            pill("shippingbox", deploy, Palette.deploy, deploy == live,
+                 "k8s deploy: desired image tag on the Deployment")
+            pill("memorychip", live, Palette.pod, live == app,
+                 "k8s live: image tag on the running pod")
         }
     }
 
-    private func pill(_ icon: String, _ value: String, _ tint: Color, _ ok: Bool) -> some View {
+    private func pill(_ icon: String, _ value: String, _ tint: Color, _ ok: Bool, _ tip: String) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon).imageScale(.small)
             Text(value).font(.caption2.monospaced())
@@ -186,6 +193,7 @@ struct VersionBar: View {
         .padding(.vertical, 2)
         .background((ok ? Color.green : tint).opacity(0.18), in: Capsule())
         .foregroundStyle(ok ? Color.green : tint)
+        .help("\(tip)\n\(value)\(ok ? " — matches" : " — drift")")
     }
 }
 
@@ -221,7 +229,22 @@ struct BrandIcon: View {
             }
         }
         .frame(width: 20, height: 20)
+        .help(title.lowercased().contains("gitlab")
+            ? "GitLab HTTPS tunnel"
+            : "\(title)")
     }
+}
+
+func checkHint(_ name: String) -> String {
+    let n = name.lowercased()
+    if n.contains("data") || n.contains("postgres") { return "Database connectivity" }
+    if n.contains("cache") || n.contains("redis") { return "Cache / Redis" }
+    if n.contains("vector") || n.contains("qdrant") { return "Vector database" }
+    if n.contains("click") || n.contains("analytics") { return "Analytics store" }
+    if n.contains("llm") || n.contains("openrouter") { return "LLM provider" }
+    if n.contains("api") { return "API route" }
+    if n.contains("migrat") { return "Schema migrations" }
+    return "Health check"
 }
 
 func regionKey(_ title: String) -> String {
@@ -390,8 +413,10 @@ struct Panel: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack(spacing: 6) {
                                 Circle().fill(Palette.region(group.key)).frame(width: 8, height: 8)
+                                    .help("\(group.key) region")
                                 Label(group.key, systemImage: regionIcon(group.key))
                                     .font(.caption.weight(.semibold))
+                                    .help("\(group.key): deployments in this region")
                             }
                             .foregroundStyle(Palette.region(group.key))
                             .padding(.top, 4)
@@ -413,6 +438,7 @@ struct Panel: View {
                 Image(systemName: "clock")
                     .foregroundStyle(.secondary)
                     .imageScale(.small)
+                    .help("Time of the last poll")
                 Text(store.lastCheckedLabel)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -450,8 +476,12 @@ struct TunnelCard: View {
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
                                 .rotationEffect(.degrees(open ? 90 : 0))
+                                .help(open ? "Collapse details" : "Expand: port, pid, uptime, ssh command")
                             Spacer(minLength: 4)
-                            Mark(ok: row.up && !row.busy)
+                            Mark(
+                                ok: row.up && !row.busy,
+                                label: row.up ? "Tunnel is listening" : "Nothing is listening on this port"
+                            )
                         }
                         .contentShape(Rectangle())
                     }
@@ -476,6 +506,7 @@ struct TunnelCard: View {
                 if open {
                     HStack(spacing: 6) {
                         Image(systemName: "network").foregroundStyle(.secondary).imageScale(.small)
+                            .help("Local listen address")
                         Text(row.port.map { "\(row.host):\($0)" } ?? row.host)
                             .font(.caption.monospaced())
                         if row.up {
@@ -487,6 +518,7 @@ struct TunnelCard: View {
                     if row.up {
                         HStack(spacing: 6) {
                             Image(systemName: "terminal").foregroundStyle(.secondary).imageScale(.small)
+                                .help("Process holding the port (often ssh)")
                             Text(row.process ?? "process")
                             if let pid = row.pid { Text("pid \(pid)").foregroundStyle(.secondary) }
                             if let e = row.elapsed { Text("up \(e)").foregroundStyle(.secondary) }
@@ -522,6 +554,7 @@ struct DeployCard: View {
                         Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
                             .foregroundStyle(Palette.region(d.title))
                             .frame(width: 14)
+                            .help(d.title.lowercased().contains("prod") ? "Production" : "Development")
                         Text(envLabel(d.title))
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Palette.region(d.title))
@@ -529,9 +562,14 @@ struct DeployCard: View {
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(open ? 90 : 0))
+                            .help(open ? "Collapse details" : "Expand: health, versions, checks")
                         Spacer(minLength: 2)
                         Spark(values: d.spark)
-                        Mark(ok: d.up, warn: d.health == "degraded")
+                        Mark(
+                            ok: d.up,
+                            warn: d.health == "degraded",
+                            label: "Overall health: \(d.health)"
+                        )
                     }
                     .contentShape(Rectangle())
                 }
@@ -571,6 +609,7 @@ struct DeployCard: View {
                             Image(systemName: "circle.grid.2x1")
                                 .foregroundStyle(.secondary)
                                 .frame(width: 14)
+                                .help("Per-service health probes from /health")
                             Text("Checks").font(.caption)
                             Spacer()
                             CheckDots(checks: d.checks)
