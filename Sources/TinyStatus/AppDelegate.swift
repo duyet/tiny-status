@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let w = NSWindow(contentViewController: host)
             w.title = "Settings"
             w.styleMask = [.titled, .closable, .resizable]
-            w.setContentSize(NSSize(width: 560, height: 520))
+            w.setContentSize(NSSize(width: 680, height: 680))
             w.isReleasedWhenClosed = false
             settingsWindow = w
         }

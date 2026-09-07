@@ -346,26 +346,37 @@ struct ConfigWindow: View {
     var body: some View {
         Form {
             Section {
-                TextField("Seconds", value: $store.editPollSeconds, format: .number)
+                ForEach(store.allChecks()) { c in
+                    CheckConfigDetail(check: c, store: store)
+                }
             } header: {
-                Label("Check", systemImage: "timer")
+                Label("Checks (\(store.allChecks().count))", systemImage: "list.bullet")
+            } footer: {
+                Text("Click a check to see config and the last live probe. Edit JSON below to change fields, then Save.")
+            }
+            Section {
+                TextField("Poll seconds", value: $store.editPollSeconds, format: .number)
+                LabeledContent("Last poll") {
+                    Text(store.lastCheckedLabel)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Label("Schedule", systemImage: "timer")
             }
             Section {
                 Toggle(isOn: $store.editAlertsEnabled) { Label("Enabled", systemImage: "bell") }
                 Toggle(isOn: $store.editOnDown) { Label("On down", systemImage: "xmark.octagon") }
                 Toggle(isOn: $store.editOnRecover) { Label("On recover", systemImage: "checkmark.seal") }
                 Toggle(isOn: $store.editOnDrift) { Label("On version drift", systemImage: "arrow.left.arrow.right") }
-                TextField("Seconds", value: $store.editCooldown, format: .number)
+                TextField("Cooldown seconds", value: $store.editCooldown, format: .number)
             } header: {
                 Label("Alerts", systemImage: "bell.badge")
             }
             Section {
-                LabeledContent {
+                LabeledContent("Path") {
                     Text(ConfigLoader.userURL.path)
-                        .font(.caption)
+                        .font(.caption.monospaced())
                         .textSelection(.enabled)
-                } label: {
-                    Label("Path", systemImage: "doc")
                 }
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([ConfigLoader.userURL])
@@ -410,7 +421,7 @@ struct ConfigWindow: View {
             Section {
                 TextEditor(text: $store.configText)
                     .font(.system(.caption, design: .monospaced))
-                    .frame(minHeight: 160)
+                    .frame(minHeight: 220)
                     .scrollContentBackground(.hidden)
             } header: {
                 Label("JSON", systemImage: "curlybraces")
@@ -423,7 +434,7 @@ struct ConfigWindow: View {
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 520, minHeight: 480)
+        .frame(minWidth: 640, minHeight: 640)
         .onAppear { store.loadConfigEditor() }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
@@ -432,6 +443,119 @@ struct ConfigWindow: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
+        }
+    }
+}
+
+private struct CheckConfigDetail: View {
+    var check: Check
+    @ObservedObject var store: Store
+
+    var body: some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 8) {
+                kv("ID", check.id)
+                kv("Kind", check.kind.rawValue.uppercased())
+                if let u = check.url { kv("Health URL", u) }
+                if let h = check.host {
+                    kv("Host", check.port.map { "\(h):\($0)" } ?? h)
+                }
+                if let u = check.openUrl { kv("Open URL", u) }
+                if check.discover == true { kv("Discover", "auto-find health paths") }
+                cmd("Start", check.start)
+                cmd("Stop", check.stop)
+                cmd("Open", check.open)
+                cmd("Command", check.command)
+                cmd("kubectl deploy", check.k8s)
+                cmd("kubectl live", check.k8sLive)
+                liveBlock
+            }
+            .padding(.vertical, 6)
+        } label: {
+            Label {
+                HStack {
+                    Text(check.title)
+                    Spacer()
+                    Text(liveLabel)
+                        .font(.caption)
+                        .foregroundStyle(liveColor)
+                    Text(check.kind.rawValue.uppercased())
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                }
+            } icon: {
+                Image(systemName: check.kind == .tcp ? "network" : check.kind == .http ? "globe" : "terminal")
+            }
+        }
+    }
+
+    @ViewBuilder private var liveBlock: some View {
+        if let t = store.tunnels.first(where: { $0.id == check.id }) {
+            Divider()
+            Text("Last probe").font(.caption).foregroundStyle(.secondary)
+            kv("State", t.up ? "Listening" : "Not listening")
+            if let ms = t.ms { kv("Connect", String(format: "%.0f ms", ms)) }
+            if let p = t.process { kv("Process", p) }
+            if let pid = t.pid { kv("PID", pid) }
+            if let e = t.elapsed { kv("Uptime", e) }
+            if let c = t.command { kv("Command line", c) }
+        }
+        if let d = store.deploys.first(where: { $0.id == check.id }) {
+            Divider()
+            Text("Last probe").font(.caption).foregroundStyle(.secondary)
+            kv("Health", d.health)
+            kv("App version", d.liveVersion)
+            kv("Deploy image", d.k8sVersion)
+            kv("Pod image", d.k8sLiveVersion)
+            if let u = d.uptime { kv("Uptime", String(format: "%.1fs", u)) }
+            if let avg = d.avgMs { kv("Avg latency", String(format: "%.0f ms", avg)) }
+            if !d.checks.isEmpty {
+                Text("Services").font(.caption).foregroundStyle(.secondary)
+                ForEach(d.checks) { c in
+                    HStack {
+                        Image(systemName: checkIcon(c.name))
+                            .foregroundStyle(Palette.health(c.status))
+                            .frame(width: 14)
+                        Text(c.name)
+                        Spacer()
+                        Text(c.status)
+                            .foregroundStyle(Palette.health(c.status))
+                        if let ms = c.ms {
+                            Text(String(format: "%.0f ms", ms))
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    private var liveLabel: String {
+        if let t = store.tunnels.first(where: { $0.id == check.id }) { return t.up ? "Up" : "Down" }
+        if let d = store.deploys.first(where: { $0.id == check.id }) { return d.health }
+        return "—"
+    }
+
+    private var liveColor: Color {
+        if let t = store.tunnels.first(where: { $0.id == check.id }) { return t.up ? .green : .red }
+        if let d = store.deploys.first(where: { $0.id == check.id }) { return Palette.health(d.health) }
+        return .secondary
+    }
+
+    private func kv(_ k: String, _ v: String) -> some View {
+        LabeledContent(k) {
+            Text(v)
+                .font(.caption.monospaced())
+                .textSelection(.enabled)
+                .lineLimit(3)
+        }
+    }
+
+    @ViewBuilder private func cmd(_ k: String, _ parts: [String]?) -> some View {
+        if let parts, !parts.isEmpty {
+            kv(k, parts.joined(separator: " "))
         }
     }
 }
