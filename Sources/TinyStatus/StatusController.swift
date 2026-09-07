@@ -2,7 +2,25 @@ import AppKit
 import Combine
 
 private enum Col: String, CaseIterable {
-    case status, name, kind, tags, history, latency, target
+    case status, name, kind, tags, group, history, latency, version, target
+
+    var title: String {
+        switch self {
+        case .status: ""
+        case .name: "Check"
+        case .kind: "Type"
+        case .tags: "Tags"
+        case .group: "Group"
+        case .history: "History"
+        case .latency: "Latency"
+        case .version: "Version"
+        case .target: "Target"
+        }
+    }
+
+    var optional: Bool {
+        self != .status && self != .name
+    }
 }
 
 final class Node: NSObject {
@@ -19,12 +37,13 @@ final class Node: NSObject {
     let leaf: Bool
     let tags: [String]
     let group: String
+    let version: String
     var children: [Node] = []
 
     init(
         id: String, title: String, kind: String, status: String, ok: Bool, warn: Bool,
         spark: [Double], latency: String, target: String, url: String?, leaf: Bool,
-        tags: [String] = [], group: String = "",
+        tags: [String] = [], group: String = "", version: String = "",
         children: [Node] = []
     ) {
         self.id = id
@@ -40,6 +59,7 @@ final class Node: NSObject {
         self.leaf = leaf
         self.tags = tags
         self.group = group
+        self.version = version
         self.children = children
     }
 }
@@ -52,6 +72,8 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private var filter = ""
     private var expanded = Set<String>()
     private var seededGroups = false
+    private var fitting = false
+    private var userResized = false
     private let table = NSOutlineView()
     private let empty = NSTextField(wrappingLabelWithString: "No checks yet. Choose TinyStatus → Import checks…")
 
@@ -75,7 +97,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.allowsColumnReordering = true
         table.allowsColumnResizing = true
         table.allowsEmptySelection = true
-        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        table.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         table.gridStyleMask = []
         table.intercellSpacing = NSSize(width: 6, height: 0)
         table.indentationPerLevel = 16
@@ -87,14 +109,18 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.autosaveName = "TinyStatus.checks.v2"
         table.autosaveTableColumns = false
 
-        addCol(.status, "", 32, min: 28, max: 36, flex: false)
-        addCol(.name, "Check", 160, min: 96, max: 420, flex: false)
-        addCol(.kind, "Type", 52, min: 44, max: 72, flex: false)
-        addCol(.tags, "Tags", 80, min: 56, max: 220, flex: false)
-        addCol(.history, "History", 148, min: 120, max: 200, flex: false)
-        addCol(.latency, "Latency", 64, min: 52, max: 88, flex: false)
-        addCol(.target, "Target", 240, min: 80, max: 4000, flex: true)
+        addCol(.status, 32, min: 28, max: 36, flex: false)
+        addCol(.name, 180, min: 96, max: 520, flex: true)
+        addCol(.kind, 52, min: 44, max: 90, flex: false)
+        addCol(.tags, 80, min: 48, max: 240, flex: false)
+        addCol(.group, 72, min: 48, max: 160, flex: false)
+        addCol(.history, 148, min: 100, max: 280, flex: true)
+        addCol(.latency, 64, min: 48, max: 110, flex: false)
+        addCol(.version, 88, min: 56, max: 220, flex: false)
+        addCol(.target, 200, min: 80, max: 4000, flex: true)
         table.outlineTableColumn = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.name.rawValue))
+        applyHiddenColumns()
+        table.headerView?.menu = columnMenu()
         if table.sortDescriptors.isEmpty {
             table.sortDescriptors = [NSSortDescriptor(key: Col.name.rawValue, ascending: true)]
         }
@@ -118,9 +144,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         view = root
     }
 
-    private func addCol(_ id: Col, _ title: String, _ w: CGFloat, min: CGFloat, max: CGFloat, flex: Bool) {
+    private func addCol(_ id: Col, _ w: CGFloat, min: CGFloat, max: CGFloat, flex: Bool) {
         let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id.rawValue))
-        c.title = title
+        c.title = id.title
         c.width = w
         c.minWidth = min
         c.maxWidth = max
@@ -164,10 +190,62 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        table.sizeLastColumnToFit()
+        if !userResized { table.sizeLastColumnToFit() }
+    }
+
+    func outlineViewColumnDidResize(_ notification: Notification) {
+        if !fitting { userResized = true }
+    }
+
+    private var hiddenCols: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "TinyStatus.hiddenColumns") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue), forKey: "TinyStatus.hiddenColumns") }
+    }
+
+    private func columnMenu() -> NSMenu {
+        let m = NSMenu(title: "Columns")
+        for col in Col.allCases where col.optional {
+            let i = NSMenuItem(title: col.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = col.rawValue
+            i.state = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(col.rawValue))?.isHidden == false ? .on : .off
+            m.addItem(i)
+        }
+        m.addItem(.separator())
+        let fit = NSMenuItem(title: "Fit to Content", action: #selector(fitColumns), keyEquivalent: "")
+        fit.target = self
+        m.addItem(fit)
+        return m
+    }
+
+    @objc private func toggleColumn(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(raw))
+        else { return }
+        c.isHidden.toggle()
+        var h = hiddenCols
+        if c.isHidden { h.insert(raw) } else { h.remove(raw) }
+        hiddenCols = h
+        userResized = false
+        sizeColumnsToContent()
+        table.headerView?.menu = columnMenu()
+    }
+
+    @objc private func fitColumns() {
+        userResized = false
+        sizeColumnsToContent()
+    }
+
+    private func applyHiddenColumns() {
+        let hidden = hiddenCols
+        for col in Col.allCases where col.optional {
+            table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(col.rawValue))?.isHidden = hidden.contains(col.rawValue)
+        }
     }
 
     private func sizeColumnsToContent() {
+        fitting = true
+        defer { fitting = false }
         let body = NSFont.systemFont(ofSize: 13)
         let small = NSFont.systemFont(ofSize: 12)
         let tagsFont = NSFont.systemFont(ofSize: 11)
@@ -178,39 +256,66 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         var nameW: CGFloat = textW("Check", header) + 24
         var kindW: CGFloat = textW("Type", header) + 20
         var tagsW: CGFloat = textW("Tags", header) + 20
+        var groupW: CGFloat = textW("Group", header) + 20
         var latW: CGFloat = textW("Latency", header) + 20
+        var verW: CGFloat = textW("Version", header) + 20
+        var kinds = Set<String>()
         var hasTags = false
+        var hasVersion = false
+        var hasGroup = false
         func walk(_ nodes: [Node], level: Int) {
             for n in nodes {
                 nameW = max(nameW, 28 + CGFloat(level) * table.indentationPerLevel + 18 + textW(n.title, n.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : body) + 12)
                 if n.kind != "info" && n.kind != "group" {
+                    kinds.insert(n.kind)
                     kindW = max(kindW, textW(n.kind, small) + 20)
                 }
-                if !n.tags.isEmpty, n.kind != "group" {
+                if !n.tags.isEmpty, n.kind != "group", n.kind != "info" {
                     hasTags = true
                     tagsW = max(tagsW, textW(n.tags.joined(separator: "  "), tagsFont) + 20)
                 }
+                if !n.group.isEmpty, n.kind != "group", n.kind != "info" {
+                    hasGroup = true
+                    groupW = max(groupW, textW(n.group, small) + 20)
+                }
                 if !n.latency.isEmpty {
                     latW = max(latW, textW(n.latency, .monospacedDigitSystemFont(ofSize: 12, weight: .regular)) + 20)
+                }
+                if !n.version.isEmpty {
+                    hasVersion = true
+                    verW = max(verW, textW(n.version, small) + 20)
                 }
                 walk(n.children, level: level + 1)
             }
         }
         walk(roots, level: 0)
-        func set(_ id: Col, _ w: CGFloat) {
+        let userHide = hiddenCols
+        func hide(_ id: Col, auto: Bool) {
             guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)) else { return }
+            c.isHidden = userHide.contains(id.rawValue) || auto
+        }
+        hide(.kind, auto: kinds.count < 2)
+        hide(.tags, auto: !hasTags)
+        hide(.group, auto: store.groupBy == .tag || !hasGroup)
+        hide(.version, auto: !hasVersion)
+        hide(.history, auto: false)
+        hide(.latency, auto: false)
+        hide(.target, auto: false)
+        if userResized { return }
+        func set(_ id: Col, _ w: CGFloat) {
+            guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)), !c.isHidden else { return }
             c.width = min(c.maxWidth, max(c.minWidth, w))
         }
         set(.status, 32)
         set(.name, nameW)
         set(.kind, kindW)
-        if let tagsCol = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.tags.rawValue)) {
-            tagsCol.isHidden = !hasTags
-            if hasTags { tagsCol.width = min(tagsCol.maxWidth, max(tagsCol.minWidth, tagsW)) }
-        }
+        set(.tags, tagsW)
+        set(.group, groupW)
         set(.history, 148)
         set(.latency, latW)
+        set(.version, verW)
         table.sizeLastColumnToFit()
+        table.headerView?.menu = columnMenu()
     }
 
     private func matches(_ n: Node) -> Bool {
@@ -270,7 +375,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             id: t.id, title: t.title, kind: "TCP",
             status: t.busy ? "Checking" : (t.up ? "Up" : "Down"),
             ok: t.up, warn: false, spark: t.spark, latency: lat, target: target, url: nil, leaf: false,
-            tags: t.tags, group: t.group,
+            tags: t.tags, group: t.group, version: "",
             children: kids
         )
     }
@@ -313,6 +418,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             ok: ok, warn: warn, spark: d.spark, latency: lat,
             target: d.openUrl ?? "", url: d.openUrl, leaf: false,
             tags: d.tags, group: d.group,
+            version: (d.liveVersion == "—" || d.liveVersion == "…") ? "" : d.liveVersion,
             children: kids
         )
     }
@@ -443,6 +549,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             return cmp(latencyValue(a), latencyValue(b))
         case .history:
             return cmp(a.spark.last ?? -1, b.spark.last ?? -1)
+        case .group:
+            return a.group.localizedStandardCompare(b.group)
+        case .version:
+            return a.version.localizedStandardCompare(b.version)
         default:
             return a.title.localizedStandardCompare(b.title)
         }
@@ -499,10 +609,24 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             return cell
         case .tags:
             let cell = textCell(outlineView, id: "tags")
-            cell.textField?.stringValue = r.kind == "group" ? "" : r.tags.joined(separator: "  ")
+            cell.textField?.stringValue = r.kind == "group" || r.kind == "info" ? "" : r.tags.joined(separator: "  ")
             cell.textField?.font = .systemFont(ofSize: 11)
             cell.textField?.textColor = .tertiaryLabelColor
             cell.toolTip = r.tags.joined(separator: ", ")
+            return cell
+        case .group:
+            let cell = textCell(outlineView, id: "group")
+            cell.textField?.stringValue = r.kind == "group" || r.kind == "info" ? "" : r.group
+            cell.textField?.font = .systemFont(ofSize: 12)
+            cell.textField?.textColor = .secondaryLabelColor
+            return cell
+        case .version:
+            let cell = textCell(outlineView, id: "ver")
+            cell.textField?.stringValue = r.version
+            cell.textField?.font = .systemFont(ofSize: 12)
+            cell.textField?.textColor = .secondaryLabelColor
+            cell.textField?.lineBreakMode = .byTruncatingMiddle
+            cell.toolTip = r.version
             return cell
         case .history:
             let id = NSUserInterfaceItemIdentifier("history")
