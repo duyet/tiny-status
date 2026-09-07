@@ -340,233 +340,315 @@ func checkIcon(_ name: String) -> String {
     return "circle.fill"
 }
 
+private enum SettingsPage: String, CaseIterable, Identifiable, Hashable {
+    case general, checks, alerts, backup, json
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .checks: "Checks"
+        case .alerts: "Alerts"
+        case .backup: "Backup"
+        case .json: "JSON"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .general: "gearshape"
+        case .checks: "list.bullet"
+        case .alerts: "bell"
+        case .backup: "externaldrive.badge.icloud"
+        case .json: "curlybraces"
+        }
+    }
+}
+
 struct ConfigWindow: View {
     @ObservedObject var store: Store
 
+    private var page: SettingsPage { SettingsPage(rawValue: store.settingsPage) ?? .general }
+
     var body: some View {
+        NavigationSplitView {
+            List(SettingsPage.allCases, selection: $store.settingsPage) { p in
+                Label(p.title, systemImage: p.icon).tag(p.rawValue)
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 220)
+        } detail: {
+            Group {
+                switch page {
+                case .general: generalPage
+                case .checks: checksPage
+                case .alerts: alertsPage
+                case .backup: backupPage
+                case .json: jsonPage
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .navigationTitle(page.title)
+        .frame(minWidth: 720, minHeight: 480)
+        .onAppear {
+            store.loadConfigEditor()
+            if store.settingsCheckId == nil { store.settingsCheckId = store.allChecks().first?.id }
+        }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save") { store.saveConfig() }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private var generalPage: some View {
         Form {
             Section {
-                ForEach(store.allChecks()) { c in
-                    CheckConfigDetail(check: c, store: store)
+                LabeledContent("Health checks") {
+                    Text("\(store.healthCheckUp) of \(store.healthCheckTotal) up")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
                 }
-            } header: {
-                Label("Checks (\(store.allChecks().count))", systemImage: "list.bullet")
-            } footer: {
-                Text("\(store.healthCheckSummary). Nested services from each health JSON are included. Click a check for config and the last probe.")
+                LabeledContent("Last poll") {
+                    Text(store.lastCheckedLabel).foregroundStyle(.secondary)
+                }
             }
-            Section {
+            Section("Table") {
                 Picker("Group by", selection: $store.editGroupBy) {
                     Text("Tag").tag(GroupBy.tag.rawValue)
                     Text("Kind").tag(GroupBy.kind.rawValue)
                     Text("None").tag(GroupBy.none.rawValue)
                 }
                 .pickerStyle(.segmented)
-                TextField("Poll seconds", value: $store.editPollSeconds, format: .number)
-                LabeledContent("Last poll") {
-                    Text(store.lastCheckedLabel)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Label("Display", systemImage: "rectangle.split.3x1")
-            } footer: {
-                Text("Tag groups use each check’s group field, or the first tag. Titles like “SG dev” infer SG and dev when tags are omitted.")
+                Text("Uses each check’s group, or the first tag. Titles like SG dev infer region and env when tags are omitted.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Section {
-                Toggle(isOn: $store.editAlertsEnabled) { Label("Enabled", systemImage: "bell") }
-                Toggle(isOn: $store.editOnDown) { Label("On down", systemImage: "xmark.octagon") }
-                Toggle(isOn: $store.editOnRecover) { Label("On recover", systemImage: "checkmark.seal") }
-                Toggle(isOn: $store.editOnDrift) { Label("On version drift", systemImage: "arrow.left.arrow.right") }
-                TextField("Cooldown seconds", value: $store.editCooldown, format: .number)
-            } header: {
-                Label("Alerts", systemImage: "bell.badge")
+            Section("Polling") {
+                TextField("Interval (seconds)", value: $store.editPollSeconds, format: .number)
             }
-            Section {
+            Section("Config file") {
                 LabeledContent("Path") {
                     Text(ConfigLoader.userURL.path)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
+                        .lineLimit(2)
                 }
-                Button {
+                Button("Reveal in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([ConfigLoader.userURL])
-                } label: {
-                    Label("Reveal in Finder", systemImage: "folder")
                 }
-            } header: {
-                Label("File", systemImage: "internaldrive")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.top, 8)
+    }
+
+    private var checksPage: some View {
+        HSplitView {
+            List(store.allChecks(), selection: $store.settingsCheckId) { c in
+                HStack(spacing: 8) {
+                    Image(systemName: c.kind == .tcp ? "network" : c.kind == .http ? "globe" : "terminal")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(c.title)
+                        Text(Tags.group(c) + " · " + c.kind.rawValue.uppercased())
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Circle()
+                        .fill(checkLiveColor(c))
+                        .frame(width: 8, height: 8)
+                }
+                .tag(c.id)
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 200, idealWidth: 240, maxWidth: 300)
+            if let c = store.allChecks().first(where: { $0.id == store.settingsCheckId }) {
+                CheckInspector(check: c, store: store)
+                    .padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                Text("Select a check")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func checkLiveColor(_ c: Check) -> Color {
+        if let t = store.tunnels.first(where: { $0.id == c.id }) { return t.up ? .green : .red }
+        if let d = store.deploys.first(where: { $0.id == c.id }) { return Palette.health(d.health) }
+        return .secondary
+    }
+
+    private var alertsPage: some View {
+        Form {
+            Section {
+                Toggle("Enable alerts", isOn: $store.editAlertsEnabled)
             }
             Section {
-                Toggle(isOn: $store.editBackupEnabled) { Label("Enabled", systemImage: "externaldrive.badge.checkmark") }
-                Toggle(isOn: $store.editBackupAuto) { Label("Backup on Save", systemImage: "clock.arrow.circlepath") }
+                Toggle("When a check goes down", isOn: $store.editOnDown)
+                Toggle("When a check recovers", isOn: $store.editOnRecover)
+                Toggle("When deploy and pod versions drift", isOn: $store.editOnDrift)
+            }
+            .disabled(!store.editAlertsEnabled)
+            Section {
+                TextField("Cooldown (seconds)", value: $store.editCooldown, format: .number)
+            } footer: {
+                Text("Minimum time between notifications for the same check.")
+            }
+        }
+        .formStyle(.grouped)
+        .padding(.top, 8)
+    }
+
+    private var backupPage: some View {
+        Form {
+            Section {
+                Toggle("Git backup", isOn: $store.editBackupEnabled)
+                Toggle("Backup on Save", isOn: $store.editBackupAuto)
+            }
+            Section("Repository") {
                 TextField("Repo folder", text: $store.editBackupRepo)
                 TextField("File in repo", text: $store.editBackupFile)
                 TextField("Remote", text: $store.editBackupRemote)
                 TextField("Branch", text: $store.editBackupBranch)
                 TextField("Clone URL", text: $store.editBackupRemoteUrl)
+            }
+            .disabled(!store.editBackupEnabled)
+            Section {
                 HStack {
-                    Button { store.gitBackup() } label: { Label("Backup", systemImage: "square.and.arrow.up") }
-                    Button { store.gitPull() } label: { Label("Pull", systemImage: "square.and.arrow.down") }
-                    Button { store.gitSync() } label: { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+                    Button("Backup") { store.gitBackup() }
+                    Button("Pull") { store.gitPull() }
+                    Button("Sync") { store.gitSync() }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
                 .disabled(store.gitBusy || !store.editBackupEnabled)
                 if store.gitConflict {
                     HStack {
-                        Button { store.gitKeepLocal() } label: { Label("Keep local", systemImage: "desktopcomputer") }
-                        Button { store.gitKeepRemote() } label: { Label("Keep remote", systemImage: "cloud") }
+                        Button("Keep local") { store.gitKeepLocal() }
+                        Button("Keep remote") { store.gitKeepRemote() }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
                 }
                 if !store.gitLog.isEmpty {
                     Text(store.gitLog)
-                        .font(.system(.caption2, design: .monospaced))
+                        .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
-                }
-            } header: {
-                Label("Git backup", systemImage: "externaldrive.badge.icloud")
-            }
-            Section {
-                TextEditor(text: $store.configText)
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(minHeight: 220)
-                    .scrollContentBackground(.hidden)
-            } header: {
-                Label("JSON", systemImage: "curlybraces")
-            }
-            if let error = store.configError {
-                Section {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 640, minHeight: 640)
-        .onAppear { store.loadConfigEditor() }
-        .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button { store.saveConfig() } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
-                }
-                .keyboardShortcut(.defaultAction)
+        .padding(.top, 8)
+    }
+
+    private var jsonPage: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let error = store.configError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
             }
+            Text("Edits apply on Save. checks[], tunnels[], and deployments[] are merged by id.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.top, store.configError == nil ? 12 : 0)
+            TextEditor(text: $store.configText)
+                .font(.system(.body, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .padding(12)
         }
     }
 }
 
-private struct CheckConfigDetail: View {
+private struct CheckInspector: View {
     var check: Check
     @ObservedObject var store: Store
 
     var body: some View {
-        DisclosureGroup {
-            VStack(alignment: .leading, spacing: 8) {
-                kv("ID", check.id)
-                kv("Kind", check.kind.rawValue.uppercased())
-                kv("Group", Tags.group(check))
-                kv("Tags", Tags.resolved(check).joined(separator: ", "))
-                if let u = check.url { kv("Health URL", u) }
+        Form {
+            Section {
+                LabeledContent("Name", value: check.title)
+                LabeledContent("ID", value: check.id)
+                LabeledContent("Kind", value: check.kind.rawValue.uppercased())
+                LabeledContent("Group", value: Tags.group(check))
+                LabeledContent("Tags", value: Tags.resolved(check).joined(separator: ", "))
+            }
+            Section("Endpoint") {
+                if let u = check.url { selectable("Health URL", u) }
                 if let h = check.host {
-                    kv("Host", check.port.map { "\(h):\($0)" } ?? h)
+                    selectable("Host", check.port.map { "\(h):\($0)" } ?? h)
                 }
-                if let u = check.openUrl { kv("Open URL", u) }
-                if check.discover == true { kv("Discover", "auto-find health paths") }
-                cmd("Start", check.start)
-                cmd("Stop", check.stop)
-                cmd("Open", check.open)
-                cmd("Command", check.command)
-                cmd("kubectl deploy", check.k8s)
-                cmd("kubectl live", check.k8sLive)
-                liveBlock
-            }
-            .padding(.vertical, 6)
-        } label: {
-            Label {
-                HStack {
-                    Text(check.title)
-                    Spacer()
-                    Text(liveLabel)
-                        .font(.caption)
-                        .foregroundStyle(liveColor)
-                    Text(check.kind.rawValue.uppercased())
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
+                if let u = check.openUrl { selectable("Open URL", u) }
+                if check.discover == true {
+                    LabeledContent("Discover", value: "Auto-find health paths")
                 }
-            } icon: {
-                Image(systemName: check.kind == .tcp ? "network" : check.kind == .http ? "globe" : "terminal")
             }
-        }
-    }
-
-    @ViewBuilder private var liveBlock: some View {
-        if let t = store.tunnels.first(where: { $0.id == check.id }) {
-            Divider()
-            Text("Last probe").font(.caption).foregroundStyle(.secondary)
-            kv("State", t.up ? "Listening" : "Not listening")
-            if let ms = t.ms { kv("Connect", String(format: "%.0f ms", ms)) }
-            if let p = t.process { kv("Process", p) }
-            if let pid = t.pid { kv("PID", pid) }
-            if let e = t.elapsed { kv("Uptime", e) }
-            if let c = t.command { kv("Command line", c) }
-        }
-        if let d = store.deploys.first(where: { $0.id == check.id }) {
-            Divider()
-            Text("Last probe").font(.caption).foregroundStyle(.secondary)
-            kv("Health", d.health)
-            kv("App version", d.liveVersion)
-            kv("Deploy image", d.k8sVersion)
-            kv("Pod image", d.k8sLiveVersion)
-            if let u = d.uptime { kv("Uptime", String(format: "%.1fs", u)) }
-            if let avg = d.avgMs { kv("Avg latency", String(format: "%.0f ms", avg)) }
-            if !d.checks.isEmpty {
-                Text("Services").font(.caption).foregroundStyle(.secondary)
-                ForEach(d.checks) { c in
-                    HStack {
-                        Image(systemName: checkIcon(c.name))
-                            .foregroundStyle(Palette.health(c.status))
-                            .frame(width: 14)
-                        Text(c.name)
-                        Spacer()
-                        Text(c.status)
-                            .foregroundStyle(Palette.health(c.status))
-                        if let ms = c.ms {
-                            Text(String(format: "%.0f ms", ms))
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
+            if check.start != nil || check.stop != nil || check.open != nil || check.command != nil {
+                Section("Commands") {
+                    cmd("Start", check.start)
+                    cmd("Stop", check.stop)
+                    cmd("Open", check.open)
+                    cmd("Command", check.command)
+                }
+            }
+            if check.k8s != nil || check.k8sLive != nil {
+                Section("Kubernetes") {
+                    cmd("Deploy image", check.k8s)
+                    cmd("Live pod", check.k8sLive)
+                }
+            }
+            if let t = store.tunnels.first(where: { $0.id == check.id }) {
+                Section("Last probe") {
+                    LabeledContent("State", value: t.up ? "Listening" : "Not listening")
+                    if let ms = t.ms { LabeledContent("Connect", value: String(format: "%.0f ms", ms)) }
+                    if let p = t.process { LabeledContent("Process", value: p) }
+                    if let pid = t.pid { LabeledContent("PID", value: pid) }
+                    if let e = t.elapsed { LabeledContent("Uptime", value: e) }
+                    if let c = t.command { selectable("Command line", c) }
+                }
+            }
+            if let d = store.deploys.first(where: { $0.id == check.id }) {
+                Section("Last probe") {
+                    LabeledContent("Health", value: d.health)
+                    LabeledContent("App", value: d.liveVersion)
+                    LabeledContent("Deploy", value: d.k8sVersion)
+                    LabeledContent("Pod", value: d.k8sLiveVersion)
+                    if let u = d.uptime { LabeledContent("Uptime", value: String(format: "%.0fs", u)) }
+                    if let avg = d.avgMs { LabeledContent("Avg latency", value: String(format: "%.0f ms", avg)) }
+                }
+                if !d.checks.isEmpty {
+                    Section("Services") {
+                        ForEach(d.checks) { c in
+                            LabeledContent(c.name) {
+                                HStack(spacing: 8) {
+                                    Text(c.status).foregroundStyle(Palette.health(c.status))
+                                    if let ms = c.ms {
+                                        Text(String(format: "%.0f ms", ms))
+                                            .foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                    }
+                                }
+                            }
                         }
                     }
-                    .font(.caption)
                 }
             }
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
     }
 
-    private var liveLabel: String {
-        if let t = store.tunnels.first(where: { $0.id == check.id }) { return t.up ? "Up" : "Down" }
-        if let d = store.deploys.first(where: { $0.id == check.id }) { return d.health }
-        return "—"
-    }
-
-    private var liveColor: Color {
-        if let t = store.tunnels.first(where: { $0.id == check.id }) { return t.up ? .green : .red }
-        if let d = store.deploys.first(where: { $0.id == check.id }) { return Palette.health(d.health) }
-        return .secondary
-    }
-
-    private func kv(_ k: String, _ v: String) -> some View {
+    private func selectable(_ k: String, _ v: String) -> some View {
         LabeledContent(k) {
-            Text(v)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .lineLimit(3)
+            Text(v).font(.caption.monospaced()).textSelection(.enabled).lineLimit(4)
         }
     }
 
     @ViewBuilder private func cmd(_ k: String, _ parts: [String]?) -> some View {
-        if let parts, !parts.isEmpty {
-            kv(k, parts.joined(separator: " "))
-        }
+        if let parts, !parts.isEmpty { selectable(k, parts.joined(separator: " ")) }
     }
 }
 

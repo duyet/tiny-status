@@ -31,6 +31,8 @@ final class Store: ObservableObject {
     @Published var gitConflict = false
     @Published var expanded: Set<String> = []
     @Published var editGroupBy: String = GroupBy.tag.rawValue
+    @Published var settingsPage: String = "general"
+    @Published var settingsCheckId: String?
 
     var groupBy: GroupBy { GroupBy(rawValue: editGroupBy) ?? .tag }
     var groupOrder: [String] { cfg.groups ?? ["Tunnel", "SG", "EU", "ZA", "dev", "prod", "Other"] }
