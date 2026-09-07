@@ -11,19 +11,56 @@ struct BarLabel: View {
     }
 }
 
+enum Palette {
+    static let gitlab = Color(red: 0.99, green: 0.43, blue: 0.15)
+    static let sg = Color(red: 0.10, green: 0.72, blue: 0.64)
+    static let eu = Color(red: 0.28, green: 0.48, blue: 0.98)
+    static let za = Color(red: 0.95, green: 0.72, blue: 0.12)
+    static let app = Color(red: 0.35, green: 0.55, blue: 1.0)
+    static let deploy = Color(red: 0.62, green: 0.40, blue: 0.98)
+    static let pod = Color(red: 0.20, green: 0.78, blue: 0.55)
+
+    static func region(_ key: String) -> Color {
+        switch regionKey(key) {
+        case "SG": sg
+        case "EU": eu
+        case "ZA": za
+        default: .purple
+        }
+    }
+
+    static func health(_ s: String) -> Color {
+        switch s {
+        case "healthy": .green
+        case "degraded": .orange
+        default: .red
+        }
+    }
+}
+
 struct Card<Content: View>: View {
+    var accent: Color = .clear
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(10)
+            .padding(.leading, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.background.secondary)
+                    .fill(accent.opacity(0.10))
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(.separator.opacity(0.4), lineWidth: 1)
+                    .strokeBorder(accent.opacity(0.45), lineWidth: 1)
+            }
+            .overlay(alignment: .leading) {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 12, bottomLeadingRadius: 12,
+                    bottomTrailingRadius: 0, topTrailingRadius: 0
+                )
+                .fill(accent)
+                .frame(width: 4)
             }
     }
 }
@@ -62,13 +99,13 @@ struct Line: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: icon)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(warn ? Color.orange : ok ? Color.green : Color.red)
                 .frame(width: 12)
                 .imageScale(.small)
             Text(label)
             Spacer(minLength: 6)
             Text(value)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(warn ? Color.orange : ok ? Color.primary : Color.red)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Mark(ok: ok, warn: warn)
@@ -91,7 +128,12 @@ struct Spark: View {
             }
             let last = values.last ?? 0
             let color: Color = last >= 0.99 ? .green : last >= 0.4 ? .orange : .red
-            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+            var fill = path
+            fill.addLine(to: CGPoint(x: size.width, y: size.height))
+            fill.addLine(to: CGPoint(x: 0, y: size.height))
+            fill.closeSubpath()
+            ctx.fill(fill, with: .color(color.opacity(0.22)))
+            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
         }
         .frame(width: 56, height: 16)
         .accessibilityLabel("Health history")
@@ -129,21 +171,21 @@ struct VersionBar: View {
     var live: String
     var body: some View {
         HStack(spacing: 4) {
-            pill("iphone", app, deploy == app && live == app)
-            pill("shippingbox", deploy, deploy == live)
-            pill("memorychip", live, live == app)
+            pill("iphone", app, Palette.app, deploy == app && live == app)
+            pill("shippingbox", deploy, Palette.deploy, deploy == live)
+            pill("memorychip", live, Palette.pod, live == app)
         }
     }
 
-    private func pill(_ icon: String, _ value: String, _ ok: Bool) -> some View {
+    private func pill(_ icon: String, _ value: String, _ tint: Color, _ ok: Bool) -> some View {
         HStack(spacing: 3) {
             Image(systemName: icon).imageScale(.small)
             Text(value).font(.caption2.monospaced())
         }
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
-        .background(ok ? Color.green.opacity(0.16) : Color.orange.opacity(0.16), in: Capsule())
-        .foregroundStyle(ok ? Color.green : Color.orange)
+        .background((ok ? Color.green : tint).opacity(0.18), in: Capsule())
+        .foregroundStyle(ok ? Color.green : tint)
     }
 }
 
@@ -346,10 +388,13 @@ struct Panel: View {
                     }
                     ForEach(regionGroups(store.deploys)) { group in
                         VStack(alignment: .leading, spacing: 6) {
-                            Label(group.key, systemImage: regionIcon(group.key))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.top, 4)
+                            HStack(spacing: 6) {
+                                Circle().fill(Palette.region(group.key)).frame(width: 8, height: 8)
+                                Label(group.key, systemImage: regionIcon(group.key))
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .foregroundStyle(Palette.region(group.key))
+                            .padding(.top, 4)
                             LazyVGrid(
                                 columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
                                 spacing: 8
@@ -391,13 +436,13 @@ struct TunnelCard: View {
     @ObservedObject var store = Store.shared
     var open: Bool { store.expanded.contains(row.id) }
     var body: some View {
-        Card {
+        Card(accent: Palette.gitlab) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Button { store.toggleExpand(row.id) } label: {
                         HStack(spacing: 8) {
                             BrandIcon(title: row.title)
-                            Text(row.title).font(.subheadline.weight(.semibold))
+                            Text(row.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.gitlab)
                             Text(row.port.map { "\(row.host):\($0)" } ?? "")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
@@ -470,15 +515,16 @@ struct DeployCard: View {
     @ObservedObject var store = Store.shared
     var open: Bool { store.expanded.contains(d.id) }
     var body: some View {
-        Card {
+        Card(accent: Palette.region(d.title)) {
             VStack(alignment: .leading, spacing: 6) {
                 Button { store.toggleExpand(d.id) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: d.title.lowercased().contains("prod") ? "server.rack" : "hammer")
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(Palette.region(d.title))
                             .frame(width: 14)
                         Text(envLabel(d.title))
                             .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Palette.region(d.title))
                         Image(systemName: "chevron.right")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
