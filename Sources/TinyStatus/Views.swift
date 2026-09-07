@@ -15,15 +15,15 @@ struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         content
-            .padding(14)
+            .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(.background.secondary)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(.separator.opacity(0.45), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(.separator.opacity(0.4), lineWidth: 1)
             }
     }
 }
@@ -34,8 +34,22 @@ struct Mark: View {
     var body: some View {
         Image(systemName: warn ? "exclamationmark.circle.fill" : ok ? "checkmark.circle.fill" : "xmark.circle.fill")
             .foregroundStyle(warn ? Color.orange : ok ? Color.green : Color.red)
-            .imageScale(.medium)
+            .imageScale(.small)
             .symbolRenderingMode(.hierarchical)
+    }
+}
+
+struct IconBtn: View {
+    var system: String
+    var help: String
+    var action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: system)
+        }
+        .help(help)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 }
 
@@ -46,19 +60,20 @@ struct Line: View {
     var ok: Bool
     var warn: Bool = false
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Image(systemName: icon)
                 .foregroundStyle(.secondary)
-                .frame(width: 14)
+                .frame(width: 12)
+                .imageScale(.small)
             Text(label)
-            Spacer(minLength: 8)
+            Spacer(minLength: 6)
             Text(value)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             Mark(ok: ok, warn: warn)
         }
-        .font(.callout)
+        .font(.caption)
     }
 }
 
@@ -76,9 +91,9 @@ struct Spark: View {
             }
             let last = values.last ?? 0
             let color: Color = last >= 0.99 ? .green : last >= 0.4 ? .orange : .red
-            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
+            ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
         }
-        .frame(width: 76, height: 20)
+        .frame(width: 56, height: 16)
         .accessibilityLabel("Health history")
     }
 
@@ -94,11 +109,14 @@ struct Spark: View {
 struct CheckDots: View {
     var checks: [CheckRow]
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(checks) { c in
-                Circle()
-                    .fill(c.status == "healthy" ? Color.green : c.status == "degraded" ? Color.orange : Color.red)
-                    .frame(width: 7, height: 7)
+                Image(systemName: checkIcon(c.name))
+                    .font(.system(size: 9))
+                    .foregroundStyle(
+                        c.status == "healthy" ? Color.green
+                            : c.status == "degraded" ? Color.orange : Color.red
+                    )
                     .help("\(c.name): \(c.status)")
             }
         }
@@ -110,30 +128,47 @@ struct VersionBar: View {
     var deploy: String
     var live: String
     var body: some View {
-        HStack(spacing: 6) {
-            pill("app", app, deploy == app && live == app)
-            pill("deploy", deploy, deploy == live)
-            pill("pod", live, live == app)
+        HStack(spacing: 4) {
+            pill("iphone", app, deploy == app && live == app)
+            pill("shippingbox", deploy, deploy == live)
+            pill("memorychip", live, live == app)
         }
     }
 
-    private func pill(_ name: String, _ value: String, _ ok: Bool) -> some View {
-        Text("\(name) \(value)")
-            .font(.caption2.monospaced())
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(ok ? Color.green.opacity(0.18) : Color.red.opacity(0.18), in: Capsule())
-            .foregroundStyle(ok ? Color.green : Color.red)
+    private func pill(_ icon: String, _ value: String, _ ok: Bool) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon).imageScale(.small)
+            Text(value).font(.caption2.monospaced())
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(ok ? Color.green.opacity(0.16) : Color.orange.opacity(0.16), in: Capsule())
+        .foregroundStyle(ok ? Color.green : Color.orange)
     }
 }
 
 func regionIcon(_ title: String) -> String {
     let t = title.lowercased()
     if t.contains("gitlab") { return "network" }
+    if t.contains("ssh") || t.contains("tunnel") { return "lock.shield" }
     if t.hasPrefix("sg") { return "globe.asia.australia.fill" }
     if t.hasPrefix("eu") { return "globe.europe.africa.fill" }
     if t.hasPrefix("za") { return "globe" }
-    return "server.rack"
+    if t.contains("prod") { return "server.rack" }
+    if t.contains("dev") { return "hammer" }
+    return "app"
+}
+
+func checkIcon(_ name: String) -> String {
+    let n = name.lowercased()
+    if n.contains("data") || n.contains("postgres") { return "cylinder.split.1x2" }
+    if n.contains("cache") || n.contains("redis") { return "bolt.fill" }
+    if n.contains("vector") || n.contains("qdrant") { return "square.stack.3d.up" }
+    if n.contains("click") || n.contains("analytics") { return "chart.bar" }
+    if n.contains("llm") || n.contains("openrouter") { return "sparkles" }
+    if n.contains("api") { return "point.3.connected.trianglepath.dotted" }
+    if n.contains("migrat") { return "arrow.triangle.2.circlepath" }
+    return "circle.fill"
 }
 
 struct ConfigWindow: View {
@@ -141,72 +176,92 @@ struct ConfigWindow: View {
 
     var body: some View {
         Form {
-            Section("Check") {
-                TextField("Interval (seconds)", value: $store.editPollSeconds, format: .number)
+            Section {
+                TextField("Seconds", value: $store.editPollSeconds, format: .number)
+            } header: {
+                Label("Check", systemImage: "timer")
             }
-            Section("Alerts") {
-                Toggle("Enabled", isOn: $store.editAlertsEnabled)
-                Toggle("On down", isOn: $store.editOnDown)
-                Toggle("On recover", isOn: $store.editOnRecover)
-                Toggle("On version drift", isOn: $store.editOnDrift)
-                TextField("Cooldown (seconds)", value: $store.editCooldown, format: .number)
+            Section {
+                Toggle(isOn: $store.editAlertsEnabled) { Label("Enabled", systemImage: "bell") }
+                Toggle(isOn: $store.editOnDown) { Label("On down", systemImage: "xmark.octagon") }
+                Toggle(isOn: $store.editOnRecover) { Label("On recover", systemImage: "checkmark.seal") }
+                Toggle(isOn: $store.editOnDrift) { Label("On version drift", systemImage: "arrow.left.arrow.right") }
+                TextField("Seconds", value: $store.editCooldown, format: .number)
+            } header: {
+                Label("Alerts", systemImage: "bell.badge")
             }
-            Section("File") {
-                Text(ConfigLoader.userURL.path)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([ConfigLoader.userURL])
+            Section {
+                LabeledContent {
+                    Text(ConfigLoader.userURL.path)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                } label: {
+                    Label("Path", systemImage: "doc")
                 }
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([ConfigLoader.userURL])
+                } label: {
+                    Label("Reveal in Finder", systemImage: "folder")
+                }
+            } header: {
+                Label("File", systemImage: "internaldrive")
             }
-            Section("Git backup") {
-                Toggle("Enabled", isOn: $store.editBackupEnabled)
-                Toggle("Backup on Save", isOn: $store.editBackupAuto)
+            Section {
+                Toggle(isOn: $store.editBackupEnabled) { Label("Enabled", systemImage: "externaldrive.badge.checkmark") }
+                Toggle(isOn: $store.editBackupAuto) { Label("Backup on Save", systemImage: "clock.arrow.circlepath") }
                 TextField("Repo folder", text: $store.editBackupRepo)
                 TextField("File in repo", text: $store.editBackupFile)
                 TextField("Remote", text: $store.editBackupRemote)
                 TextField("Branch", text: $store.editBackupBranch)
-                TextField("Clone URL (optional)", text: $store.editBackupRemoteUrl)
+                TextField("Clone URL", text: $store.editBackupRemoteUrl)
                 HStack {
-                    Button("Backup") { store.gitBackup() }
-                    Button("Pull") { store.gitPull() }
-                    Button("Sync") { store.gitSync() }
+                    Button { store.gitBackup() } label: { Label("Backup", systemImage: "square.and.arrow.up") }
+                    Button { store.gitPull() } label: { Label("Pull", systemImage: "square.and.arrow.down") }
+                    Button { store.gitSync() } label: { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(store.gitBusy || !store.editBackupEnabled)
                 if store.gitConflict {
                     HStack {
-                        Button("Keep local") { store.gitKeepLocal() }
-                        Button("Keep remote") { store.gitKeepRemote() }
+                        Button { store.gitKeepLocal() } label: { Label("Keep local", systemImage: "desktopcomputer") }
+                        Button { store.gitKeepRemote() } label: { Label("Keep remote", systemImage: "cloud") }
                     }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
                 if !store.gitLog.isEmpty {
                     Text(store.gitLog)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.system(.caption2, design: .monospaced))
                         .textSelection(.enabled)
                 }
+            } header: {
+                Label("Git backup", systemImage: "externaldrive.badge.icloud")
             }
-            Section("JSON") {
+            Section {
                 TextEditor(text: $store.configText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 220)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(minHeight: 160)
                     .scrollContentBackground(.hidden)
+            } header: {
+                Label("JSON", systemImage: "curlybraces")
             }
             if let error = store.configError {
                 Section {
-                    Text(error).foregroundStyle(.red)
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 560, minHeight: 560)
+        .frame(minWidth: 520, minHeight: 480)
         .onAppear { store.loadConfigEditor() }
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") { store.saveConfig() }
-                    .keyboardShortcut(.defaultAction)
+                Button { store.saveConfig() } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .keyboardShortcut(.defaultAction)
             }
         }
     }
@@ -218,140 +273,77 @@ struct Panel: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(store.tunnels) { row in
                         Card {
-                            VStack(alignment: .leading, spacing: 10) {
-                                HStack {
-                                    Label(row.title, systemImage: "network")
-                                        .font(.headline)
-                                        .labelStyle(.titleAndIcon)
-                                    Spacer()
-                                    Mark(ok: row.up && !row.busy)
+                            HStack(spacing: 8) {
+                                Image(systemName: regionIcon(row.title))
+                                    .foregroundStyle(.tint)
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(row.title).font(.subheadline.weight(.semibold))
+                                    Text(row.busy ? "…" : row.up ? "Connected" : "Disconnected")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
                                 }
-                                Line(
-                                    icon: "bolt.horizontal.circle",
-                                    label: "Status",
-                                    value: row.busy ? "…" : row.up ? "Connected" : "Disconnected",
-                                    ok: row.up && !row.busy
-                                )
-                                HStack(spacing: 8) {
-                                    Button { store.runTunnel(row.id, kind: .start) } label: {
-                                        Label("Connect", systemImage: "link")
-                                    }
-                                    Button { store.runTunnel(row.id, kind: .stop) } label: {
-                                        Label("Disconnect", systemImage: "pause.circle")
-                                    }
-                                    Button { store.runTunnel(row.id, kind: .open) } label: {
-                                        Label("Open", systemImage: "safari")
-                                    }
+                                Spacer(minLength: 4)
+                                Mark(ok: row.up && !row.busy)
+                                IconBtn(system: "link", help: "Connect") {
+                                    store.runTunnel(row.id, kind: .start)
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .labelStyle(.titleAndIcon)
+                                IconBtn(system: "pause.circle", help: "Disconnect") {
+                                    store.runTunnel(row.id, kind: .stop)
+                                }
+                                IconBtn(system: "safari", help: "Open") {
+                                    store.runTunnel(row.id, kind: .open)
+                                }
                             }
                         }
                     }
                     ForEach(store.deploys) { d in
                         Card {
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(alignment: .center, spacing: 8) {
-                                    Label(d.title, systemImage: regionIcon(d.title))
-                                        .font(.headline)
-                                    Spacer()
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: regionIcon(d.title))
+                                        .foregroundStyle(.tint)
+                                        .frame(width: 18)
+                                    Text(d.title).font(.subheadline.weight(.semibold))
+                                    CheckDots(checks: d.checks)
+                                    Spacer(minLength: 4)
                                     Spark(values: d.spark)
                                     Mark(ok: d.up, warn: d.health == "degraded")
-                                }
-                                Line(
-                                    icon: "heart",
-                                    label: "Health",
-                                    value: d.health,
-                                    ok: d.up,
-                                    warn: d.health == "degraded"
-                                )
-                                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
-                                Line(
-                                    icon: "chevron.left.forwardslash.chevron.right",
-                                    label: "App live",
-                                    value: d.liveVersion,
-                                    ok: d.up
-                                )
-                                Line(
-                                    icon: "shippingbox",
-                                    label: "k8s deploy",
-                                    value: d.k8sVersion,
-                                    ok: d.k8sVersion != "—" && d.k8sVersion == d.k8sLiveVersion
-                                )
-                                Line(
-                                    icon: "memorychip",
-                                    label: "k8s live",
-                                    value: d.k8sLiveVersion,
-                                    ok: d.k8sLiveVersion != "—" && d.k8sLiveVersion == d.liveVersion
-                                )
-                                if !d.checks.isEmpty {
-                                    HStack {
-                                        Image(systemName: "circle.grid.2x1")
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 14)
-                                        Text("Checks")
-                                        Spacer()
-                                        CheckDots(checks: d.checks)
-                                    }
-                                    .font(.callout)
-                                    DisclosureGroup("Details") {
-                                        ForEach(d.checks) { c in
-                                            Line(
-                                                icon: "stethoscope",
-                                                label: c.name,
-                                                value: c.status,
-                                                ok: c.status == "healthy",
-                                                warn: c.status == "degraded"
-                                            )
+                                    if let url = d.openUrl {
+                                        IconBtn(system: "arrow.up.right.square", help: "Open health") {
+                                            store.openURL(url)
                                         }
                                     }
                                 }
-                                if let url = d.openUrl {
-                                    Button { store.openURL(url) } label: {
-                                        Label("Open health", systemImage: "arrow.up.right.square")
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                }
+                                VersionBar(app: d.liveVersion, deploy: d.k8sVersion, live: d.k8sLiveVersion)
                             }
                         }
                     }
                 }
-                .padding(16)
+                .padding(10)
             }
             Divider()
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(store.lastCheckedLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Mark(ok: store.allOK)
-                }
-                HStack(spacing: 8) {
-                    Button { store.openConfigWindow() } label: {
-                        Label("Config", systemImage: "gearshape")
-                    }
-                    Button { store.load(); store.poll() } label: {
-                        Label("Reload", systemImage: "arrow.clockwise")
-                    }
-                    Spacer()
-                    Button { NSApp.terminate(nil) } label: {
-                        Label("Quit", systemImage: "xmark.circle")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+            HStack(spacing: 8) {
+                Image(systemName: "clock")
+                    .foregroundStyle(.secondary)
+                    .imageScale(.small)
+                Text(store.lastCheckedLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Mark(ok: store.allOK)
+                IconBtn(system: "gearshape", help: "Settings") { store.openConfigWindow() }
+                IconBtn(system: "arrow.clockwise", help: "Reload") { store.load(); store.poll() }
+                IconBtn(system: "xmark.circle", help: "Quit") { NSApp.terminate(nil) }
             }
-            .padding(12)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .background(.bar)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .frame(minWidth: 380, minHeight: 520)
+        .frame(minWidth: 360, minHeight: 420)
     }
 }
-
