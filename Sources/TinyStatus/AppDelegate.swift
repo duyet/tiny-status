@@ -40,7 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         w.setContentSize(NSSize(width: 720, height: 520))
         w.minSize = NSSize(width: 560, height: 360)
-        w.toolbar = makeToolbar()
+        w.titleVisibility = .hidden
+        w.titlebarAppearsTransparent = true
+        w.styleMask.insert(.fullSizeContentView)
         w.center()
         w.isReleasedWhenClosed = false
         w.makeKeyAndOrderFront(nil)
