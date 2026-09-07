@@ -22,6 +22,7 @@ struct Backup: Codable {
 struct Config: Codable {
     var pollSeconds: Double?
     var groupBy: String?
+    var density: String?
     var groups: [String]?
     var order: [String]?
     var alerts: Alerts?

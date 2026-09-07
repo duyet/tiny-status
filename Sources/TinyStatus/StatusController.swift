@@ -92,7 +92,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
         table.delegate = self
         table.dataSource = self
-        table.rowSizeStyle = .medium
+        table.rowSizeStyle = Store.shared.compact ? .small : .medium
         table.style = .fullWidth
         table.usesAlternatingRowBackgroundColors = true
         table.allowsColumnReordering = true
@@ -104,7 +104,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         table.gridStyleMask = []
         table.intercellSpacing = NSSize(width: 6, height: 0)
-        table.indentationPerLevel = 16
+        table.indentationPerLevel = Store.shared.compact ? 11 : 16
         table.indentationMarkerFollowsCell = true
         table.autoresizesOutlineColumn = false
         table.action = #selector(clicked)
@@ -170,6 +170,8 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 
     func reload() {
+        applyDensity()
+        UserDefaults.standard.set(store.editDensity, forKey: "TinyStatus.density")
         let keep = expandedIds()
         var items: [Node] = []
         for t in store.tunnels {
@@ -363,9 +365,23 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         }
     }
 
+    private func applyDensity() {
+        let compact = store.compact
+        table.rowSizeStyle = compact ? .small : .medium
+        table.indentationPerLevel = compact ? 11 : 16
+        table.intercellSpacing = NSSize(width: compact ? 4 : 6, height: 0)
+    }
+
+    private func formatLatency(_ ms: Double?) -> String {
+        guard let ms else { return "—" }
+        if ms >= 10_000 { return "timeout" }
+        if ms >= 1000 { return String(format: "%.1fs", ms / 1000) }
+        return String(format: "%.0f ms", ms)
+    }
+
     private func tunnelNode(_ t: TunnelRow) -> Node {
         let target = t.port.map { "\(t.host):\($0)" } ?? t.host
-        let lat = t.ms.map { String(format: "%.0f ms", $0) } ?? "—"
+        let lat = formatLatency(t.ms)
         var kids: [Node] = []
         kids.append(detail(t.id, "Listen", target))
         if let p = t.process { kids.append(detail(t.id, "Process", p)) }
@@ -385,29 +401,31 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         let warn = d.health == "degraded"
         let ok = d.health == "healthy"
         let checking = d.health == "…"
-        let lat = d.avgMs.map { String(format: "%.0f ms", $0) } ?? "—"
+        let lat = formatLatency(d.avgMs)
         var kids: [Node] = []
-        if let u = d.openUrl, !u.isEmpty {
+        let compact = store.compact
+        if !compact, let u = d.openUrl, !u.isEmpty {
             kids.append(detail(d.id, "URL", u))
         }
-        for c in d.checks {
+        let services = d.checks.filter { !($0.name == "http" && d.checks.count == 1) }
+        for c in services {
             let cw = c.status == "degraded"
             let cok = c.status == "healthy"
             kids.append(Node(
                 id: "\(d.id)/\(c.name)", title: c.name, kind: "check",
                 status: cok ? "Up" : cw ? "Degraded" : "Down",
                 ok: cok, warn: cw, spark: c.spark,
-                latency: c.ms.map { String(format: "%.0f ms", $0) } ?? "—",
+                latency: formatLatency(c.ms),
                 target: d.openUrl ?? "", url: d.openUrl, leaf: true
             ))
         }
-        if d.liveVersion != "—" && d.liveVersion != "…" {
+        if !compact, d.liveVersion != "—" && d.liveVersion != "…" {
             kids.append(detail(d.id, "App", d.liveVersion))
         }
-        if d.k8sVersion != "—" && d.k8sVersion != "…" {
+        if !compact, d.k8sVersion != "—" && d.k8sVersion != "timeout" && d.k8sVersion != "…" {
             kids.append(detail(d.id, "Deploy", d.k8sVersion))
         }
-        if d.k8sLiveVersion != "—" && d.k8sLiveVersion != "…" {
+        if !compact, d.k8sLiveVersion != "—" && d.k8sLiveVersion != "timeout" && d.k8sLiveVersion != "…" {
             kids.append(detail(d.id, "Pod", d.k8sLiveVersion))
         }
         if let u = d.uptime {
@@ -690,7 +708,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             let id = NSUserInterfaceItemIdentifier("history")
             let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? HistoryCell) ?? HistoryCell()
             cell.identifier = id
-            cell.apply(info ? [] : r.spark)
+            cell.apply(info ? [] : r.spark, compact: store.compact)
             return cell
         case .latency:
             let cell = textCell(outlineView, id: "lat")
@@ -786,23 +804,28 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
 private final class HistoryCell: NSTableCellView {
     let beat = HeartbeatView()
+    private var height: NSLayoutConstraint?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         beat.translatesAutoresizingMaskIntoConstraints = false
         addSubview(beat)
+        let h = beat.heightAnchor.constraint(equalToConstant: 12)
+        height = h
         NSLayoutConstraint.activate([
             beat.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             beat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             beat.centerYAnchor.constraint(equalTo: centerYAnchor),
-            beat.heightAnchor.constraint(equalToConstant: 14),
+            h,
         ])
     }
 
     required init?(coder: NSCoder) { nil }
 
-    func apply(_ spark: [Double]) {
+    func apply(_ spark: [Double], compact: Bool) {
         beat.values = spark
+        beat.slots = compact ? 24 : 32
+        height?.constant = compact ? 10 : 14
         toolTip = spark.isEmpty ? "No history yet" : "Last \(spark.count) checks"
     }
 }

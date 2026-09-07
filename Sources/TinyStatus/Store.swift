@@ -31,6 +31,9 @@ final class Store: ObservableObject {
     @Published var gitConflict = false
     @Published var expanded: Set<String> = []
     @Published var editGroupBy: String = GroupBy.tag.rawValue
+    @Published var editDensity: String = UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "compact"
+
+    var compact: Bool { editDensity != "regular" }
     @Published var settingsPage: String = "general"
     @Published var settingsCheckId: String?
 
@@ -417,6 +420,7 @@ final class Store: ObservableObject {
         let c = cfg
         editPollSeconds = c.pollSeconds ?? 30
         editGroupBy = c.groupBy ?? GroupBy.tag.rawValue
+        editDensity = c.density ?? UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "compact"
         editAlertsEnabled = c.alerts?.enabled ?? true
         editOnDown = c.alerts?.onDown ?? true
         editOnRecover = c.alerts?.onRecover ?? true
@@ -452,6 +456,7 @@ final class Store: ObservableObject {
             }
             root["pollSeconds"] = editPollSeconds
             root["groupBy"] = editGroupBy
+            root["density"] = editDensity
             root["alerts"] = [
                 "enabled": editAlertsEnabled,
                 "onDown": editOnDown,

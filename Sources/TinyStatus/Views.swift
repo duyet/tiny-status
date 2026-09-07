@@ -414,13 +414,18 @@ struct ConfigWindow: View {
                 }
             }
             Section("Table") {
+                Picker("Density", selection: $store.editDensity) {
+                    Text("Compact").tag("compact")
+                    Text("Regular").tag("regular")
+                }
+                .pickerStyle(.segmented)
                 Picker("Group by", selection: $store.editGroupBy) {
                     Text("Tag").tag(GroupBy.tag.rawValue)
                     Text("Kind").tag(GroupBy.kind.rawValue)
                     Text("None").tag(GroupBy.none.rawValue)
                 }
                 .pickerStyle(.segmented)
-                Text("Uses each check’s group, or the first tag. Titles like SG dev infer region and env when tags are omitted.")
+                Text("These apply to the table immediately. Save writes them to the config file.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
