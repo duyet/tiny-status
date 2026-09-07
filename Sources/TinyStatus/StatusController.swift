@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 private enum Col: String, CaseIterable {
-    case status, name, kind, history, latency, target
+    case status, name, kind, tags, history, latency, target
 }
 
 final class Node: NSObject {
@@ -17,11 +17,14 @@ final class Node: NSObject {
     let target: String
     let url: String?
     let leaf: Bool
+    let tags: [String]
+    let group: String
     var children: [Node] = []
 
     init(
         id: String, title: String, kind: String, status: String, ok: Bool, warn: Bool,
         spark: [Double], latency: String, target: String, url: String?, leaf: Bool,
+        tags: [String] = [], group: String = "",
         children: [Node] = []
     ) {
         self.id = id
@@ -35,6 +38,8 @@ final class Node: NSObject {
         self.target = target
         self.url = url
         self.leaf = leaf
+        self.tags = tags
+        self.group = group
         self.children = children
     }
 }
@@ -80,9 +85,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.autosaveTableColumns = true
 
         addCol(.status, "", 28, min: 24, max: 36)
-        addCol(.name, "Check", 220, min: 140, max: 480)
+        addCol(.name, "Check", 200, min: 140, max: 480)
         addCol(.kind, "Type", 56, min: 48, max: 80)
-        addCol(.history, "History", 176, min: 120, max: 280)
+        addCol(.tags, "Tags", 120, min: 72, max: 240)
+        addCol(.history, "History", 160, min: 110, max: 280)
         addCol(.latency, "Latency", 72, min: 60, max: 100)
         addCol(.target, "Target", 260, min: 120, max: 2000)
         table.outlineTableColumn = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(Col.name.rawValue))
@@ -132,22 +138,29 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     func reload() {
         let keep = expandedIds()
-        var all: [Node] = []
+        var items: [Node] = []
         for t in store.tunnels {
             let n = tunnelNode(t)
-            if matches(n) { all.append(n) }
+            if matches(n) { items.append(n) }
         }
         for d in store.deploys {
             let n = deployNode(d)
-            if matches(n) { all.append(n) }
+            if matches(n) { items.append(n) }
         }
-        roots = all
-        empty.isHidden = !all.isEmpty
+        roots = grouped(items)
+        empty.isHidden = !items.isEmpty
         table.reloadData()
+        let groupKept = keep.filter { $0.hasPrefix("g-") }
         for n in roots {
-            if keep.contains(n.id) || !filter.isEmpty { table.expandItem(n, expandChildren: !filter.isEmpty) }
+            if n.kind == "group", groupKept.isEmpty || groupKept.contains(n.id) || !filter.isEmpty {
+                table.expandItem(n)
+            }
+            if keep.contains(n.id) || !filter.isEmpty {
+                table.expandItem(n, expandChildren: !filter.isEmpty)
+            }
+            for c in n.children where keep.contains(c.id) { table.expandItem(c) }
         }
-        view.window?.subtitle = all.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
+        view.window?.subtitle = items.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
     }
 
@@ -164,10 +177,42 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             || n.kind.lowercased().contains(filter)
             || n.target.lowercased().contains(filter)
             || n.status.lowercased().contains(filter)
+            || n.tags.contains(where: { $0.lowercased().contains(filter) })
+            || n.group.lowercased().contains(filter)
         {
             return true
         }
         return n.children.contains(where: matches)
+    }
+
+    private func grouped(_ items: [Node]) -> [Node] {
+        switch store.groupBy {
+        case .none: return items
+        case .kind: return buckets(items) { $0.kind == "group" ? $0.group : ($0.kind == "TCP" ? "TCP" : $0.kind == "HTTP" ? "HTTP" : $0.kind) }
+        case .tag: return buckets(items) { $0.group.isEmpty ? "Other" : $0.group }
+        }
+    }
+
+    private func buckets(_ items: [Node], key: (Node) -> String) -> [Node] {
+        var map: [String: [Node]] = [:]
+        for n in items { map[key(n), default: []].append(n) }
+        let pref = store.groupOrder
+        let names = pref.filter { map[$0] != nil } + map.keys.filter { !pref.contains($0) }.sorted()
+        return names.compactMap { name in
+            guard let kids = map[name], !kids.isEmpty else { return nil }
+            let up = kids.filter(\.ok).count
+            return Node(
+                id: "g-\(name)", title: name, kind: "group",
+                status: "\(up)/\(kids.count) up",
+                ok: kids.allSatisfy(\.ok),
+                warn: kids.contains(where: \.warn),
+                spark: Array(kids.flatMap(\.spark).suffix(40)),
+                latency: "\(up)/\(kids.count)",
+                target: "\(kids.count) checks",
+                url: nil, leaf: false, tags: [name], group: name,
+                children: kids
+            )
+        }
     }
 
     private func tunnelNode(_ t: TunnelRow) -> Node {
@@ -183,6 +228,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             id: t.id, title: t.title, kind: "TCP",
             status: t.busy ? "Checking" : (t.up ? "Up" : "Down"),
             ok: t.up, warn: false, spark: t.spark, latency: lat, target: target, url: nil, leaf: false,
+            tags: t.tags, group: t.group,
             children: kids
         )
     }
@@ -221,6 +267,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             status: checking ? "Checking" : ok ? "Up" : warn ? "Degraded" : "Down",
             ok: ok, warn: warn, spark: d.spark, latency: lat,
             target: d.openUrl ?? "", url: d.openUrl, leaf: kids.isEmpty,
+            tags: d.tags, group: d.group,
             children: kids
         )
     }
@@ -282,9 +329,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             let cell = iconCell(outlineView, id: "name")
             cell.textField?.isHidden = false
             cell.textField?.stringValue = r.title
-            cell.textField?.font = info ? .systemFont(ofSize: 12) : .systemFont(ofSize: 13)
+            cell.textField?.font = info ? .systemFont(ofSize: 12) : r.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
             cell.textField?.textColor = info ? .secondaryLabelColor : .labelColor
-            let icon = r.kind == "TCP" ? "network" : r.kind == "HTTP" ? "globe" : r.kind == "check" ? "circle" : "info.circle"
+            let icon = r.kind == "TCP" ? "network" : r.kind == "HTTP" ? "globe" : r.kind == "check" ? "circle" : r.kind == "group" ? "folder" : "info.circle"
             cell.imageView?.isHidden = info
             cell.imageView?.image = NSImage(systemSymbolName: icon, accessibilityDescription: r.kind)
             cell.imageView?.contentTintColor = .secondaryLabelColor
@@ -292,9 +339,16 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             return cell
         case .kind:
             let cell = textCell(outlineView, id: "kind")
-            cell.textField?.stringValue = info ? "" : r.kind
+            cell.textField?.stringValue = info || r.kind == "group" ? "" : r.kind
             cell.textField?.font = .systemFont(ofSize: 12)
             cell.textField?.textColor = .secondaryLabelColor
+            return cell
+        case .tags:
+            let cell = textCell(outlineView, id: "tags")
+            cell.textField?.stringValue = r.kind == "group" ? "" : r.tags.joined(separator: "  ")
+            cell.textField?.font = .systemFont(ofSize: 11)
+            cell.textField?.textColor = .tertiaryLabelColor
+            cell.toolTip = r.tags.joined(separator: ", ")
             return cell
         case .history:
             let id = NSUserInterfaceItemIdentifier("history")

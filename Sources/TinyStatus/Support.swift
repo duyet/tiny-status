@@ -111,9 +111,11 @@ enum ConfigLoader {
 let exampleJSON = """
 {
   "pollSeconds": 30,
+  "groupBy": "tag",
+  "groups": ["Tunnel", "SG", "EU", "ZA", "Other"],
   "checks": [
-    {"id":"web","title":"Web","kind":"http","url":"https://example.com/health","discover":true},
-    {"id":"local","title":"Local 8080","kind":"tcp","host":"127.0.0.1","port":8080}
+    {"id":"web","title":"Web","kind":"http","url":"https://example.com/health","discover":true,"tags":["web"],"group":"web"},
+    {"id":"local","title":"Local 8080","kind":"tcp","host":"127.0.0.1","port":8080,"tags":["Tunnel"],"group":"Tunnel"}
   ]
 }
 """

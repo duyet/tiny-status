@@ -30,6 +30,10 @@ final class Store: ObservableObject {
     @Published var gitBusy = false
     @Published var gitConflict = false
     @Published var expanded: Set<String> = []
+    @Published var editGroupBy: String = GroupBy.tag.rawValue
+
+    var groupBy: GroupBy { GroupBy(rawValue: editGroupBy) ?? .tag }
+    var groupOrder: [String] { cfg.groups ?? ["Tunnel", "SG", "EU", "ZA", "dev", "prod", "Other"] }
 
     func toggleExpand(_ id: String) {
         if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
@@ -131,12 +135,16 @@ final class Store: ObservableObject {
         cfgStamp = ConfigLoader.mtime()
         let checks = allChecks()
         tunnels = checks.filter { $0.kind == .tcp }.map {
-            TunnelRow(id: $0.id, title: $0.title, up: false, busy: false, host: $0.host ?? "127.0.0.1", port: $0.port)
+            TunnelRow(
+                id: $0.id, title: $0.title, up: false, busy: false, host: $0.host ?? "127.0.0.1", port: $0.port,
+                tags: Tags.resolved($0), group: Tags.group($0)
+            )
         }
         deploys = checks.filter { $0.kind != .tcp }.map {
             DeployRow(
                 id: $0.id, title: $0.title, health: "…", liveVersion: "…",
-                k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl ?? $0.url
+                k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl ?? $0.url,
+                tags: Tags.resolved($0), group: Tags.group($0)
             )
         }
         applyCache()
@@ -226,7 +234,9 @@ final class Store: ObservableObject {
                 canStop: t.stop != nil,
                 canOpen: t.open != nil,
                 spark: spark,
-                ms: info == nil ? old?.ms : info?.ms
+                ms: info == nil ? old?.ms : info?.ms,
+                tags: Tags.resolved(t),
+                group: Tags.group(t)
             )
         }
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
@@ -236,6 +246,8 @@ final class Store: ObservableObject {
                     id: d.id, title: d.title, health: "…", liveVersion: "…",
                     k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: d.openUrl ?? d.url
                 )
+            row.tags = Tags.resolved(d)
+            row.group = Tags.group(d)
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
                 s.append(DeployRow.healthScore(row.health))
@@ -353,6 +365,7 @@ final class Store: ObservableObject {
         configError = nil
         let c = cfg
         editPollSeconds = c.pollSeconds ?? 30
+        editGroupBy = c.groupBy ?? GroupBy.tag.rawValue
         editAlertsEnabled = c.alerts?.enabled ?? true
         editOnDown = c.alerts?.onDown ?? true
         editOnRecover = c.alerts?.onRecover ?? true
@@ -387,6 +400,7 @@ final class Store: ObservableObject {
                 root = obj
             }
             root["pollSeconds"] = editPollSeconds
+            root["groupBy"] = editGroupBy
             root["alerts"] = [
                 "enabled": editAlertsEnabled,
                 "onDown": editOnDown,

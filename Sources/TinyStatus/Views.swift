@@ -355,13 +355,21 @@ struct ConfigWindow: View {
                 Text("\(store.healthCheckSummary). Nested services from each health JSON are included. Click a check for config and the last probe.")
             }
             Section {
+                Picker("Group by", selection: $store.editGroupBy) {
+                    Text("Tag").tag(GroupBy.tag.rawValue)
+                    Text("Kind").tag(GroupBy.kind.rawValue)
+                    Text("None").tag(GroupBy.none.rawValue)
+                }
+                .pickerStyle(.segmented)
                 TextField("Poll seconds", value: $store.editPollSeconds, format: .number)
                 LabeledContent("Last poll") {
                     Text(store.lastCheckedLabel)
                         .foregroundStyle(.secondary)
                 }
             } header: {
-                Label("Schedule", systemImage: "timer")
+                Label("Display", systemImage: "rectangle.split.3x1")
+            } footer: {
+                Text("Tag groups use each check’s group field, or the first tag. Titles like “SG dev” infer SG and dev when tags are omitted.")
             }
             Section {
                 Toggle(isOn: $store.editAlertsEnabled) { Label("Enabled", systemImage: "bell") }
@@ -456,6 +464,8 @@ private struct CheckConfigDetail: View {
             VStack(alignment: .leading, spacing: 8) {
                 kv("ID", check.id)
                 kv("Kind", check.kind.rawValue.uppercased())
+                kv("Group", Tags.group(check))
+                kv("Tags", Tags.resolved(check).joined(separator: ", "))
                 if let u = check.url { kv("Health URL", u) }
                 if let h = check.host {
                     kv("Host", check.port.map { "\(h):\($0)" } ?? h)

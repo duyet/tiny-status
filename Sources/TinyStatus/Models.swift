@@ -21,6 +21,8 @@ struct Backup: Codable {
 
 struct Config: Codable {
     var pollSeconds: Double?
+    var groupBy: String?
+    var groups: [String]?
     var alerts: Alerts?
     var backup: Backup?
     var tunnels: [Tunnel]?
@@ -53,6 +55,8 @@ struct Tunnel: Codable, Identifiable {
     /// External signal: TCP connect. Independent of who started the tunnel.
     var probeHost: String?
     var probePort: Int?
+    var tags: [String]?
+    var group: String?
 }
 
 struct Deployment: Codable, Identifiable {
@@ -62,6 +66,8 @@ struct Deployment: Codable, Identifiable {
     var k8s: [String]?
     var k8sLive: [String]?
     var openUrl: String?
+    var tags: [String]?
+    var group: String?
 }
 
 struct TunnelInfo: Sendable {
@@ -91,6 +97,8 @@ struct TunnelRow: Identifiable {
     var canOpen = false
     var spark: [Double] = []
     var ms: Double? = nil
+    var tags: [String] = []
+    var group: String = "Other"
 }
 
 struct CheckRow: Identifiable {
@@ -112,6 +120,8 @@ struct DeployRow: Identifiable {
     var openUrl: String?
     var spark: [Double] = []
     var uptime: Double? = nil
+    var tags: [String] = []
+    var group: String = "Other"
     var up: Bool { health == "healthy" }
 
     static func healthScore(_ health: String) -> Double {
