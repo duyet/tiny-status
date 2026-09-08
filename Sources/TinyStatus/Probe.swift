@@ -72,6 +72,9 @@ enum Probe {
                 if checks.isEmpty {
                     checks = [CheckRow(name: "http", status: health == "healthy" ? "healthy" : health, ms: hit.ms)]
                 }
+            } else if let code = hit.code, (200..<300).contains(code) {
+                health = "healthy"
+                checks = [CheckRow(name: "http", status: "healthy", ms: hit.ms)]
             } else {
                 health = "down"
                 checks = [CheckRow(name: "http", status: "unhealthy", ms: hit.ms)]
@@ -93,7 +96,7 @@ enum Probe {
         return nil
     }
 
-    static func check(_ c: Check) -> (tunnel: TunnelInfo?, deploy: DeployRow?) {
+    static func check(_ c: Check, discoverPaths: [String]? = nil) -> (tunnel: TunnelInfo?, deploy: DeployRow?) {
         switch c.kind {
         case .tcp:
             let t = Tunnel(
@@ -103,11 +106,7 @@ enum Probe {
             )
             return (tunnel(t), nil)
         case .http:
-            let d = Deployment(
-                id: c.id, title: c.title, healthUrl: c.url,
-                k8s: c.k8s, k8sLive: c.k8sLive, openUrl: c.openUrl ?? c.url
-            )
-            return (nil, deployment(d))
+            return (nil, http(c, paths: HealthDiscover.paths(check: c, config: discoverPaths)))
         case .command:
             let code = Shell.run(c.command ?? ["/usr/bin/true"], timeout: 20)
             let row = DeployRow(
@@ -121,6 +120,77 @@ enum Probe {
         }
     }
 
+    private static func http(_ c: Check, paths: [String]) -> DeployRow {
+        let k8s = tag(Shell.output(c.k8s ?? [], timeout: 20))
+        let k8sLive = tag(Shell.output(c.k8sLive ?? [], timeout: 20))
+        func row(_ health: String, live: String, checks: [CheckRow], url: String?, uptime: Double? = nil) -> DeployRow {
+            DeployRow(
+                id: c.id, title: c.title, health: health, liveVersion: live,
+                k8sVersion: k8s, k8sLiveVersion: k8sLive, checks: checks,
+                openUrl: url ?? c.openUrl ?? c.url, uptime: uptime
+            )
+        }
+        func fromHit(_ hit: (json: [String: Any]?, code: Int?, ms: Double), url: String) -> DeployRow? {
+            guard HTTP.isHealthy(json: hit.json, code: hit.code) else { return nil }
+            var health = "healthy"
+            var live = "—"
+            var uptime: Double?
+            var checks: [CheckRow] = []
+            if let json = hit.json {
+                if let s = json["status"] as? String {
+                    let n = s.lowercased()
+                    health = ["ok", "up", "pass", "passing", "success", "healthy"].contains(n) ? "healthy" : n
+                }
+                live = (json["version"] as? String) ?? "—"
+                uptime = num(json["uptime_seconds"])
+                if let arr = json["checks"] as? [[String: Any]] {
+                    checks = arr.map {
+                        CheckRow(
+                            name: ($0["service"] as? String) ?? ($0["name"] as? String) ?? "?",
+                            status: ($0["status"] as? String) ?? "?",
+                            ms: num($0["response_time_ms"]) ?? num($0["latency_ms"])
+                        )
+                    }
+                }
+            }
+            if checks.isEmpty {
+                let path = URL(string: url)?.path ?? "http"
+                checks = [CheckRow(name: path.isEmpty || path == "/" ? "http" : path, status: health, ms: hit.ms)]
+            }
+            return row(health, live: live, checks: checks, url: url, uptime: uptime)
+        }
+        func down(_ ms: Double? = nil) -> DeployRow {
+            row("down", live: "—", checks: [CheckRow(name: "http", status: "unhealthy", ms: ms)], url: c.openUrl ?? c.url)
+        }
+        guard let start = c.url, let base = URL(string: start), base.host != nil else { return down() }
+        if HealthDiscover.wantsDiscover(c) {
+            let origin = base.originURL
+            let explicit = !base.path.isEmpty && base.path != "/"
+            if explicit, let r = fromHit(HTTP.getJSON(start, timeout: 8), url: start) { return r }
+            for p in paths {
+                let u = p.isEmpty ? origin.absoluteString : origin.absoluteString.trimmingSuffix("/") + p
+                if let r = fromHit(HTTP.getJSON(u, timeout: 4), url: u) { return r }
+            }
+            if !paths.contains(""), let r = fromHit(HTTP.getJSON(origin.absoluteString, timeout: 4), url: origin.absoluteString) {
+                return r
+            }
+            if HealthDiscover.pingEnabled(c), let host = origin.host {
+                let port = origin.port ?? (origin.scheme == "http" ? 80 : 443)
+                let tcp = TCP.probe(host: host, port: port)
+                let st = tcp.ok ? "healthy" : "unhealthy"
+                return row(
+                    tcp.ok ? "healthy" : "down",
+                    live: "tcp",
+                    checks: [CheckRow(name: "tcp", status: st, ms: tcp.ms)],
+                    url: c.openUrl ?? c.url
+                )
+            }
+            return down()
+        }
+        if let r = fromHit(HTTP.getJSON(start, timeout: 18), url: start) { return r }
+        return down()
+    }
+
     static func tag(_ image: String) -> String {
         let s = image.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return "—" }
@@ -130,14 +200,29 @@ enum Probe {
 }
 
 enum HTTP {
-    static func getJSON(_ url: String, timeout: TimeInterval) -> (json: [String: Any]?, ms: Double) {
-        guard let u = URL(string: url) else { return (nil, 0) }
+    static func isHealthy(json: [String: Any]?, code: Int?) -> Bool {
+        if let json {
+            if let s = json["status"] as? String {
+                let n = s.lowercased()
+                if ["unhealthy", "down", "fail", "failed", "error", "critical"].contains(n) { return false }
+                if ["healthy", "ok", "up", "pass", "passing", "success"].contains(n) { return true }
+            }
+            if let h = json["healthy"] as? Bool { return h }
+        }
+        if let code, (200..<300).contains(code) { return true }
+        return false
+    }
+
+    static func getJSON(_ url: String, timeout: TimeInterval) -> (json: [String: Any]?, code: Int?, ms: Double) {
+        guard let u = URL(string: url) else { return (nil, nil, 0) }
         var req = URLRequest(url: u, timeoutInterval: timeout)
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("text/html,application/json;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         let sem = DispatchSemaphore(value: 0)
         var out: [String: Any]?
+        var code: Int?
         let t0 = CFAbsoluteTimeGetCurrent()
-        URLSession.shared.dataTask(with: req) { data, _, _ in
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            code = (resp as? HTTPURLResponse)?.statusCode
             if let data,
                let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             {
@@ -147,7 +232,7 @@ enum HTTP {
         }.resume()
         _ = sem.wait(timeout: .now() + timeout + 1)
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-        return (out, ms)
+        return (out, code, ms)
     }
 }
 

@@ -26,6 +26,7 @@ struct Config: Codable {
     var density: String?
     var groups: [String]?
     var order: [String]?
+    var discoverPaths: [String]?
     var alerts: Alerts?
     var backup: Backup?
     var tunnels: [Tunnel]?
@@ -60,6 +61,9 @@ struct Tunnel: Codable, Identifiable {
     var probePort: Int?
     var tags: [String]?
     var group: String?
+    var icon: String?
+    var image: String?
+    var enabled: Bool?
 }
 
 struct Deployment: Codable, Identifiable {
@@ -71,6 +75,9 @@ struct Deployment: Codable, Identifiable {
     var openUrl: String?
     var tags: [String]?
     var group: String?
+    var icon: String?
+    var image: String?
+    var enabled: Bool?
 }
 
 struct TunnelInfo: Sendable {
@@ -98,10 +105,14 @@ struct TunnelRow: Identifiable {
     var canStart = false
     var canStop = false
     var canOpen = false
+    var actions: [CheckAction] = []
     var spark: [Double] = []
     var ms: Double? = nil
     var tags: [String] = []
     var group: String = "Other"
+    var icon: String? = nil
+    var image: String? = nil
+    var enabled: Bool = true
 }
 
 struct CheckRow: Identifiable {
@@ -125,6 +136,10 @@ struct DeployRow: Identifiable {
     var uptime: Double? = nil
     var tags: [String] = []
     var group: String = "Other"
+    var actions: [CheckAction] = []
+    var icon: String? = nil
+    var image: String? = nil
+    var enabled: Bool = true
     var up: Bool { health == "healthy" }
 
     static func healthScore(_ health: String) -> Double {

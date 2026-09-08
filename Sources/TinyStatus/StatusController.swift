@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 private enum Col: String, CaseIterable {
-    case status, name, kind, tags, group, history, latency, version, target
+    case status, name, kind, tags, group, history, latency, version, target, actions
 
     var title: String {
         switch self {
@@ -15,6 +15,7 @@ private enum Col: String, CaseIterable {
         case .latency: "Latency"
         case .version: "Version"
         case .target: "Target"
+        case .actions: "Actions"
         }
     }
 
@@ -38,12 +39,20 @@ final class Node: NSObject {
     let tags: [String]
     let group: String
     let version: String
+    let actions: [CheckAction]
+    let enabled: Bool
+    let icon: String?
+    let image: String?
     var children: [Node] = []
 
     init(
         id: String, title: String, kind: String, status: String, ok: Bool, warn: Bool,
         spark: [Double], latency: String, target: String, url: String?, leaf: Bool,
         tags: [String] = [], group: String = "", version: String = "",
+        actions: [CheckAction] = [],
+        enabled: Bool = true,
+        icon: String? = nil,
+        image: String? = nil,
         children: [Node] = []
     ) {
         self.id = id
@@ -60,11 +69,15 @@ final class Node: NSObject {
         self.tags = tags
         self.group = group
         self.version = version
+        self.actions = actions
+        self.enabled = enabled
+        self.icon = icon
+        self.image = image
         self.children = children
     }
 }
 
-final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSearchFieldDelegate {
+final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSSearchFieldDelegate, NSMenuDelegate {
     let search = NSSearchField()
     private let store = Store.shared
     private var bag = Set<AnyCancellable>()
@@ -110,11 +123,15 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.action = #selector(clicked)
         table.doubleAction = #selector(openRow)
         table.target = self
-        table.autosaveName = "TinyStatus.checks.v3"
+        table.autosaveName = "TinyStatus.checks.v6"
         table.autosaveTableColumns = true
+        let ctx = NSMenu()
+        ctx.delegate = self
+        table.menu = ctx
 
         addCol(.status, 32, min: 28, max: 36, flex: false)
-        addCol(.name, 180, min: 96, max: 520, flex: true)
+        addCol(.name, 240, min: 140, max: 640, flex: true)
+        addCol(.actions, 168, min: 96, max: 280, flex: false)
         addCol(.kind, 52, min: 44, max: 90, flex: false)
         addCol(.tags, 80, min: 48, max: 240, flex: false)
         addCol(.group, 72, min: 48, max: 160, flex: false)
@@ -152,7 +169,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         c.minWidth = min
         c.maxWidth = max
         c.resizingMask = flex ? [.userResizingMask, .autoresizingMask] : [.userResizingMask]
-        c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
+        if id != .actions {
+            c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
+        }
         table.addTableColumn(c)
     }
 
@@ -380,9 +399,12 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         if let c = t.command { kids.append(detail(t.id, "Command", c)) }
         return Node(
             id: t.id, title: t.title, kind: "TCP",
-            status: t.busy ? "Checking" : (t.up ? "Up" : "Down"),
-            ok: t.up, warn: false, spark: t.spark, latency: lat, target: target, url: nil, leaf: false,
+            status: !t.enabled ? "Off" : t.busy ? "Checking" : (t.up ? "Up" : "Down"),
+            ok: t.enabled && t.up, warn: false, spark: t.spark, latency: t.enabled ? lat : "", target: target, url: nil, leaf: false,
             tags: t.tags, group: t.group, version: "",
+            actions: t.enabled ? t.actions : [],
+            enabled: t.enabled,
+            icon: t.icon, image: t.image,
             children: kids
         )
     }
@@ -423,11 +445,14 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         }
         return Node(
             id: d.id, title: d.title, kind: "HTTP",
-            status: checking ? "Checking" : ok ? "Up" : warn ? "Degraded" : "Down",
-            ok: ok, warn: warn, spark: d.spark, latency: lat,
+            status: !d.enabled ? "Off" : checking ? "Checking" : ok ? "Up" : warn ? "Degraded" : "Down",
+            ok: d.enabled && ok, warn: d.enabled && warn, spark: d.spark, latency: d.enabled ? lat : "",
             target: d.openUrl ?? "", url: d.openUrl, leaf: false,
             tags: d.tags, group: d.group,
             version: (d.liveVersion == "—" || d.liveVersion == "…") ? "" : d.liveVersion,
+            actions: d.enabled ? d.actions : [],
+            enabled: d.enabled,
+            icon: d.icon, image: d.image,
             children: kids
         )
     }
@@ -663,16 +688,24 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             cell.toolTip = r.status
             return cell
         case .name:
-            let cell = iconCell(outlineView, id: "name")
-            cell.textField?.isHidden = false
-            cell.textField?.stringValue = r.title
-            cell.textField?.font = info ? .systemFont(ofSize: 12) : r.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
-            cell.textField?.textColor = info ? .secondaryLabelColor : .labelColor
-            let icon = r.kind == "TCP" ? "network" : r.kind == "HTTP" ? "globe" : r.kind == "check" ? "circle" : r.kind == "group" ? "folder" : "info.circle"
-            cell.imageView?.isHidden = info
-            cell.imageView?.image = NSImage(systemSymbolName: icon, accessibilityDescription: r.kind)
-            cell.imageView?.contentTintColor = .secondaryLabelColor
-            cell.toolTip = r.title
+            let id = NSUserInterfaceItemIdentifier("name-act")
+            let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? NameCell) ?? NameCell()
+            cell.identifier = id
+            let shown = (info || r.kind == "group" || r.kind == "check")
+                ? []
+                : r.actions.filter { $0.isVisible(up: r.ok && !r.warn) }
+            cell.apply(
+                title: r.title,
+                info: info,
+                group: r.kind == "group",
+                enabled: r.enabled,
+                image: r.image,
+                icon: r.icon,
+                kind: r.kind,
+                checkId: r.id,
+                actions: shown,
+                busy: r.status == "Checking"
+            )
             return cell
         case .kind:
             let cell = textCell(outlineView, id: "kind")
@@ -722,13 +755,23 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             cell.textField?.lineBreakMode = .byTruncatingMiddle
             cell.toolTip = r.target
             return cell
+        case .actions:
+            let id = NSUserInterfaceItemIdentifier("actions")
+            let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? ActionCell) ?? ActionCell()
+            cell.identifier = id
+            let shown = r.actions.filter { $0.isVisible(up: r.ok && !r.warn) }
+            cell.apply(checkId: r.id, actions: shown, enabled: r.status != "Checking")
+            return cell
         }
     }
 
     private func statusImage(_ r: Node) -> NSImage? {
         let name: String
         let color: NSColor
-        if r.warn {
+        if !r.enabled {
+            name = "pause.circle.fill"
+            color = .tertiaryLabelColor
+        } else if r.warn {
             name = "exclamationmark.circle.fill"
             color = .systemOrange
         } else if r.ok {
@@ -797,6 +840,135 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         ])
         return v
     }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = table.clickedRow
+        guard row >= 0, let n = table.item(atRow: row) as? Node else { return }
+        if n.kind != "info", n.kind != "check", n.kind != "group" {
+            let tog = NSMenuItem(
+                title: n.enabled ? "Disable" : "Enable",
+                action: #selector(toggleEnabled(_:)),
+                keyEquivalent: ""
+            )
+            tog.target = self
+            tog.representedObject = n.id
+            menu.addItem(tog)
+            if !n.actions.isEmpty { menu.addItem(.separator()) }
+        }
+        let shown = n.actions.filter { $0.isVisible(up: n.ok && !n.warn) }
+        let enabled = n.enabled && n.status != "Checking"
+        for a in shown {
+            let it = NSMenuItem(title: a.title, action: #selector(runRowAction(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = [n.id, a.id]
+            it.isEnabled = enabled
+            menu.addItem(it)
+        }
+    }
+
+    @objc func runRowAction(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
+        Store.shared.runAction(checkId: pair[0], actionId: pair[1])
+    }
+
+    @objc func toggleEnabled(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let on = store.allChecks().first(where: { $0.id == id })?.isEnabled ?? true
+        store.setCheckEnabled(id, !on)
+    }
+}
+
+private final class NameCell: NSTableCellView {
+    private var checkId = ""
+    private var actions: [CheckAction] = []
+    private let stack = NSStackView()
+    private var stackWidth: NSLayoutConstraint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let iv = NSImageView()
+        iv.translatesAutoresizingMaskIntoConstraints = false
+        iv.imageScaling = .scaleProportionallyDown
+        let tf = NSTextField(labelWithString: "")
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        tf.lineBreakMode = .byTruncatingTail
+        tf.drawsBackground = false
+        tf.isBezeled = false
+        tf.isEditable = false
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.alignment = .centerY
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iv)
+        addSubview(tf)
+        addSubview(stack)
+        imageView = iv
+        textField = tf
+        let sw = stack.widthAnchor.constraint(equalToConstant: 0)
+        stackWidth = sw
+        NSLayoutConstraint.activate([
+            iv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            iv.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iv.widthAnchor.constraint(equalToConstant: 16),
+            iv.heightAnchor.constraint(equalToConstant: 16),
+            tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 6),
+            tf.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: tf.trailingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+            sw,
+        ])
+        tf.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func apply(
+        title: String, info: Bool, group: Bool, enabled: Bool,
+        image: String?, icon: String?, kind: String,
+        checkId: String, actions: [CheckAction], busy: Bool
+    ) {
+        self.checkId = checkId
+        self.actions = actions
+        textField?.stringValue = title
+        textField?.font = info ? .systemFont(ofSize: 12) : group ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+        textField?.textColor = info || !enabled ? .secondaryLabelColor : .labelColor
+        imageView?.isHidden = info
+        if let img = CheckArt.nsImage(image) {
+            img.size = NSSize(width: 16, height: 16)
+            imageView?.image = img
+            imageView?.contentTintColor = nil
+        } else {
+            let k: CheckKind = kind == "TCP" ? .tcp : kind == "HTTP" ? .http : .command
+            let fallback = group ? "folder" : kind == "check" ? "circle" : kind == "info" ? "info.circle" : CheckArt.symbol(icon: icon, kind: k, enabled: true)
+            imageView?.image = NSImage(systemSymbolName: fallback, accessibilityDescription: kind)
+            imageView?.contentTintColor = .secondaryLabelColor
+        }
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for (i, a) in actions.enumerated() {
+            let b = NSButton(title: a.title, target: self, action: #selector(tap(_:)))
+            b.bezelStyle = .rounded
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 11)
+            b.tag = i
+            b.isEnabled = enabled && !busy
+            b.toolTip = a.title
+            stack.addArrangedSubview(b)
+        }
+        stackWidth?.isActive = false
+        stackWidth = stack.widthAnchor.constraint(greaterThanOrEqualToConstant: 0)
+        stackWidth?.isActive = true
+        toolTip = title
+    }
+
+    @objc private func tap(_ sender: NSButton) {
+        guard actions.indices.contains(sender.tag) else { return }
+        Store.shared.runAction(checkId: checkId, actionId: actions[sender.tag].id)
+    }
 }
 
 private final class HistoryCell: NSTableCellView {
@@ -824,5 +996,55 @@ private final class HistoryCell: NSTableCellView {
         beat.slots = compact ? 24 : 32
         height?.constant = compact ? 10 : 14
         toolTip = spark.isEmpty ? "No history yet" : "Last \(spark.count) checks"
+    }
+}
+
+private final class ActionCell: NSTableCellView {
+    private var checkId = ""
+    private var actions: [CheckAction] = []
+    private let stack = NSStackView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        stack.orientation = .horizontal
+        stack.spacing = 4
+        stack.alignment = .centerY
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -2),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func apply(checkId: String, actions: [CheckAction], enabled: Bool) {
+        self.checkId = checkId
+        self.actions = actions
+        stack.arrangedSubviews.forEach {
+            stack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for (i, a) in actions.enumerated() {
+            let b = NSButton(title: a.title, target: self, action: #selector(tap(_:)))
+            b.bezelStyle = .accessoryBarAction
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 11)
+            b.tag = i
+            b.isEnabled = enabled
+            b.toolTip = a.title
+            if let icon = a.icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: a.title) {
+                b.image = img
+                b.imagePosition = .imageLeading
+            }
+            stack.addArrangedSubview(b)
+        }
+    }
+
+    @objc private func tap(_ sender: NSButton) {
+        guard actions.indices.contains(sender.tag) else { return }
+        Store.shared.runAction(checkId: checkId, actionId: actions[sender.tag].id)
     }
 }

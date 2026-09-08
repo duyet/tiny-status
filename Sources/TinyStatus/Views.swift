@@ -234,41 +234,25 @@ struct VersionBar: View {
     }
 }
 
-func regionIcon(_ title: String) -> String {
-    let t = title.lowercased()
-    if t.contains("gitlab") { return "network" }
-    if t.contains("ssh") || t.contains("tunnel") { return "lock.shield" }
-    if t.hasPrefix("sg") { return "globe.asia.australia.fill" }
-    if t.hasPrefix("eu") { return "globe.europe.africa.fill" }
-    if t.hasPrefix("za") { return "globe" }
-    if t.contains("prod") { return "server.rack" }
-    if t.contains("dev") { return "hammer" }
-    return "app"
-}
-
-func gitlabImage() -> NSImage? {
-    NSImage(named: "GitLab")
-        ?? Bundle.main.url(forResource: "GitLab", withExtension: "png").flatMap { NSImage(contentsOf: $0) }
-}
-
 struct BrandIcon: View {
     var title: String
+    var kind: CheckKind = .tcp
+    var icon: String? = nil
+    var image: String? = nil
     var body: some View {
         Group {
-            if title.lowercased().contains("gitlab"), let img = gitlabImage() {
+            if let img = CheckArt.nsImage(image) {
                 Image(nsImage: img)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
             } else {
-                Image(systemName: regionIcon(title))
+                Image(systemName: CheckArt.symbol(icon: icon, kind: kind, enabled: true))
                     .foregroundStyle(.tint)
             }
         }
         .frame(width: 20, height: 20)
-        .help(title.lowercased().contains("gitlab")
-            ? "GitLab HTTPS tunnel"
-            : "\(title)")
+        .help(title)
     }
 }
 
@@ -416,6 +400,15 @@ struct ConfigWindow: View {
             Section("Polling") {
                 TextField("Interval (seconds)", value: $store.editPollSeconds, format: .number)
             }
+            Section("Table") {
+                Picker("Density", selection: $store.editDensity) {
+                    Text("Relaxed").tag("regular")
+                    Text("Compact").tag("compact")
+                }
+                .onChange(of: store.editDensity) { _, _ in
+                    store.persistTablePrefs()
+                }
+            }
             Section("Config file") {
                 LabeledContent("Path") {
                     Text(ConfigLoader.userURL.path)
@@ -447,7 +440,7 @@ struct ConfigWindow: View {
                     }
                     Spacer()
                     Circle()
-                        .fill(checkLiveColor(c))
+                        .fill(c.isEnabled ? checkLiveColor(c) : Color.secondary.opacity(0.4))
                         .frame(width: 8, height: 8)
                 }
                 .tag(c.id)
@@ -559,11 +552,17 @@ private struct CheckInspector: View {
     var body: some View {
         Form {
             Section {
+                Toggle("Enabled", isOn: Binding(
+                    get: { check.isEnabled },
+                    set: { store.setCheckEnabled(check.id, $0) }
+                ))
                 LabeledContent("Name", value: check.title)
                 LabeledContent("ID", value: check.id)
                 LabeledContent("Kind", value: check.kind.rawValue.uppercased())
                 LabeledContent("Group", value: Tags.group(check))
                 LabeledContent("Tags", value: Tags.resolved(check).joined(separator: ", "))
+                if let i = check.icon { LabeledContent("Icon", value: i) }
+                if let i = check.image { LabeledContent("Image", value: i) }
             }
             Section("Endpoint") {
                 if let u = check.url { selectable("Health URL", u) }
@@ -571,16 +570,24 @@ private struct CheckInspector: View {
                     selectable("Host", check.port.map { "\(h):\($0)" } ?? h)
                 }
                 if let u = check.openUrl { selectable("Open URL", u) }
-                if check.discover == true {
-                    LabeledContent("Discover", value: "Auto-find health paths")
+                if check.kind == .http, HealthDiscover.wantsDiscover(check) {
+                    LabeledContent("Discover", value: HealthDiscover.paths(check: check, config: nil).joined(separator: " "))
+                }
+                if check.kind == .http, check.ping == false {
+                    LabeledContent("Ping", value: "Off")
                 }
             }
-            if check.start != nil || check.stop != nil || check.open != nil || check.command != nil {
-                Section("Commands") {
-                    cmd("Start", check.start)
-                    cmd("Stop", check.stop)
-                    cmd("Open", check.open)
-                    cmd("Command", check.command)
+            if !check.resolvedActions().isEmpty || check.command != nil {
+                Section("Actions") {
+                    ForEach(check.resolvedActions()) { a in
+                        LabeledContent(a.title) {
+                            Text((a.command ?? []).joined(separator: " ") + (a.url.map { "  \($0)" } ?? ""))
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .lineLimit(2)
+                        }
+                    }
+                    cmd("Probe command", check.command)
                 }
             }
             if check.k8s != nil || check.k8sLive != nil {
@@ -762,15 +769,9 @@ struct TunnelCard: View {
                         .textSelection(.enabled)
                 }
                 HStack {
-                    if row.up {
-                        if row.canStop {
-                            Button("Disconnect") { store.runTunnel(row.id, kind: .stop) }
-                        }
-                        if row.canOpen {
-                            Button("Open") { store.runTunnel(row.id, kind: .open) }
-                        }
-                    } else if row.canStart {
-                        Button("Connect") { store.runTunnel(row.id, kind: .start) }
+                    ForEach(row.actions.filter { $0.isVisible(up: row.up) }) { a in
+                        Button(a.title) { store.runAction(checkId: row.id, actionId: a.id) }
+                            .disabled(row.busy || !row.enabled)
                     }
                 }
                 .controlSize(.small)
@@ -792,7 +793,7 @@ struct TunnelCard: View {
                     )
                 }
             } icon: {
-                BrandIcon(title: row.title)
+                BrandIcon(title: row.title, kind: .tcp, icon: row.icon, image: row.image)
             }
         }
     }
@@ -837,10 +838,15 @@ struct DeployCard: View {
                             .foregroundStyle(Palette.health(c.status))
                     }
                 }
-                if let url = d.openUrl {
-                    Button("Open health") { store.openURL(url) }
-                        .controlSize(.small)
+                HStack {
+                    if let url = d.openUrl {
+                        Button("Open health") { store.openURL(url) }
+                    }
+                    ForEach(d.actions.filter { $0.isVisible(up: d.up) }) { a in
+                        Button(a.title) { store.runAction(checkId: d.id, actionId: a.id) }
+                    }
                 }
+                .controlSize(.small)
             }
             .padding(.vertical, 4)
         } label: {

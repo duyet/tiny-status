@@ -73,6 +73,8 @@ enum ConfigLoader {
             t.probeHost = t.probeHost.map(expand)
             t.tags = t.tags?.map(expand)
             t.group = t.group.map(expand)
+            t.icon = t.icon.map(expand)
+            t.image = t.image.map(expand)
             return t
         }
         if var b = cfg.backup {
@@ -89,6 +91,8 @@ enum ConfigLoader {
             d.openUrl = d.openUrl.map(expand)
             d.tags = d.tags?.map(expand)
             d.group = d.group.map(expand)
+            d.icon = d.icon.map(expand)
+            d.image = d.image.map(expand)
             return d
         }
         cfg.checks = cfg.checks?.map { c in
@@ -103,8 +107,18 @@ enum ConfigLoader {
             c.start = c.start?.map(expand)
             c.stop = c.stop?.map(expand)
             c.open = c.open?.map(expand)
+            c.actions = c.actions?.map { a in
+                var a = a
+                a.title = expand(a.title)
+                a.command = a.command?.map(expand)
+                a.url = a.url.map(expand)
+                a.confirm = a.confirm.map(expand)
+                return a
+            }
             c.tags = c.tags?.map(expand)
             c.group = c.group.map(expand)
+            c.icon = c.icon.map(expand)
+            c.image = c.image.map(expand)
             return c
         }
         return cfg

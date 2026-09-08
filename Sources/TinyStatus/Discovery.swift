@@ -1,6 +1,84 @@
 import Darwin
 import Foundation
 
+enum HealthDiscover {
+    /// Default API health paths. Root `""` is tried after these, then TCP ping.
+    static let defaultPaths = [
+        "/health", "/healthz", "/ready", "/live", "/ping", "/status",
+        "/api/health", "/api/v1/health", "/api/v1/healthz",
+    ]
+
+    static func paths(check: Check, config: [String]?) -> [String] {
+        let raw = check.discoverPaths ?? config ?? defaultPaths
+        var seen = Set<String>()
+        var out: [String] = []
+        for p in raw {
+            let n = p.hasPrefix("/") || p.isEmpty ? p : "/" + p
+            if seen.insert(n).inserted { out.append(n) }
+        }
+        return out
+    }
+
+    static func wantsDiscover(_ c: Check) -> Bool {
+        if let d = c.discover { return d }
+        guard let s = c.url, let u = URL(string: s), u.host != nil else { return false }
+        return u.path.isEmpty || u.path == "/"
+    }
+
+    static func pingEnabled(_ c: Check) -> Bool { c.ping != false }
+
+    static func needsConfigure(_ c: Check) -> Bool {
+        guard c.kind == .http || c.url != nil else { return false }
+        guard wantsDiscover(c) else { return false }
+        guard let s = c.url, let u = URL(string: s), u.host != nil else { return false }
+        return u.path.isEmpty || u.path == "/"
+    }
+
+    /// Probe health paths / root / TCP and fill url, openUrl, kind, host, port.
+    static func configure(_ c: Check, paths: [String]?) -> Check {
+        var c = c
+        if c.url == nil, let host = c.host, c.kind != .tcp {
+            c.url = "https://\(host)"
+            if c.kind != .command { c.kind = .http }
+        }
+        guard c.kind == .http || c.url != nil, let s = c.url, let base = URL(string: s), base.host != nil else {
+            return c
+        }
+        if !needsConfigure(c), c.discover != true { return c }
+        let list = Self.paths(check: c, config: paths)
+        let origin = base.originURL
+        if let found = Discovery.probeHTTP(base: origin, timeout: 4, paths: list) {
+            c.kind = .http
+            c.openUrl = c.openUrl ?? origin.absoluteString
+            c.url = found.url
+            c.host = found.host
+            c.discover = true
+            if c.icon == nil { c.icon = "globe" }
+            return c
+        }
+        if pingEnabled(c), let host = origin.host {
+            let port = origin.port ?? (origin.scheme == "http" ? 80 : 443)
+            if TCP.probe(host: host, port: port).ok {
+                c.kind = .tcp
+                c.host = host
+                c.port = port
+                c.openUrl = c.openUrl ?? origin.absoluteString
+                c.url = nil
+                c.discover = nil
+                if c.icon == nil { c.icon = "network" }
+                return c
+            }
+        }
+        return c
+    }
+
+    static func stableId(host: String?, url: String?, title: String) -> String {
+        let h = host ?? URL(string: url ?? "")?.host ?? title
+        let s = h.lowercased().replacingOccurrences(of: "www.", with: "")
+        return s.isEmpty ? title : s
+    }
+}
+
 enum Discovery {
     struct Result: Sendable {
         var title: String
@@ -14,7 +92,7 @@ enum Discovery {
 
         func asCheck() -> Check {
             Check(
-                id: "\(title)-\(port ?? 0)-\(Int.random(in: 100...999))",
+                id: HealthDiscover.stableId(host: host, url: url, title: title),
                 title: title,
                 kind: kind,
                 url: url,
@@ -39,17 +117,19 @@ enum Discovery {
         return out
     }
 
-    static func probeHTTP(base: URL, timeout: TimeInterval = 5) -> Result? {
+    static func probeHTTP(base: URL, timeout: TimeInterval = 5, paths: [String] = HealthDiscover.defaultPaths) -> Result? {
         let origin = base.originURL
-        let paths = [
-            "", "/health", "/healthz", "/ready", "/live", "/ping", "/status",
-            "/api/health", "/api/v1/health",
-        ]
-        for path in paths {
-            guard let url = URL(string: path.isEmpty ? origin.absoluteString : origin.absoluteString.trimmingSuffix("/") + path) else {
-                continue
+        let ordered = paths + (paths.contains("") ? [] : [""])
+        for path in ordered {
+            let url: URL?
+            if path.isEmpty {
+                url = origin
+            } else {
+                url = URL(string: origin.absoluteString.trimmingSuffix("/") + path)
             }
-            if get(url, timeout: timeout) {
+            guard let url else { continue }
+            let hit = HTTP.getJSON(url.absoluteString, timeout: timeout)
+            if HTTP.isHealthy(json: hit.json, code: hit.code) {
                 return Result(
                     title: url.host ?? origin.host ?? url.absoluteString,
                     kind: .http,
@@ -75,7 +155,8 @@ enum Discovery {
                 host: u.host,
                 port: u.port,
                 url: s,
-                note: ""
+                note: "",
+                discover: true
             )]
         }
         if let json = parseJSON(s) { return json }
@@ -101,7 +182,8 @@ enum Discovery {
                     host: s,
                     port: nil,
                     url: "https://\(s)",
-                    note: ""
+                    note: "",
+                    discover: true
                 ),
                 Result(title: "\(s):443", kind: .tcp, host: s, port: 443, url: nil, note: ""),
             ]
@@ -262,7 +344,7 @@ enum Discovery {
     }
 }
 
-private extension URL {
+extension URL {
     var originURL: URL {
         var c = URLComponents()
         c.scheme = scheme
@@ -272,7 +354,7 @@ private extension URL {
     }
 }
 
-private extension String {
+extension String {
     func trimmingSuffix(_ suffix: String) -> String {
         if hasSuffix(suffix) { return String(dropLast(suffix.count)) }
         return self

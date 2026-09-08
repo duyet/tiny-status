@@ -24,6 +24,24 @@ make run
 
 `make app` builds `TinyStatus.app`. `make run` builds and opens it.
 
+### CLI
+
+The Mac app binary is also a CLI (no extra daemon). If the first argument is a command, it skips the GUI and prints JSON. Agents can add/remove checks and run Start/Stop against the same `tunnels.json` the app already reloads.
+
+```bash
+make cli
+./scripts/tiny-status list
+./scripts/tiny-status add https://example.com
+./scripts/tiny-status add '{"url":"https://example.com","group":"homelab"}'
+./scripts/tiny-status probe web
+./scripts/tiny-status action ssh start
+./scripts/tiny-status disable ssh
+./scripts/tiny-status enable ssh
+./scripts/tiny-status rm web
+```
+
+Or run `TinyStatus.app/Contents/MacOS/TinyStatus list`. Optional: `ln -sf …/scripts/tiny-status ~/.local/bin/tiny-status`.
+
 Releases: conventional commits on `main` open a **release-please** PR that bumps **0.1.x** only, updates `CHANGELOG.md` and `Info.plist`. Merge that PR by hand (never `--auto`).
 
 ## Config
@@ -62,11 +80,50 @@ Strings in titles, URLs, hosts, commands, tags, and backup paths expand `{variab
 }
 ```
 
-HTTP checks may set `"discover": true` to try, in order:
+HTTP checks **auto-discover** when `url` is a site origin (`https://example.com`) or `"discover": true`. They try, in order:
 
-`/health` `/healthz` `/ready` `/live` `/ping` `/status` `/api/health` `/api/v1/health`
+`/health` `/healthz` `/ready` `/live` `/ping` `/status` `/api/health` `/api/v1/health` `/api/v1/healthz`
+
+then the site root (2xx), then a TCP connect to 443/80 (no ICMP). Override the list globally with `"discoverPaths"` or per check with `"discoverPaths"` / `"discover": false` / `"ping": false`.
 
 A TCP check is **up** if `host:port` accepts a connection. A command check is **up** if the process exits 0.
+
+Set `"enabled": false` to keep a check in the list without probing it. Toggle from the table context menu, the menu bar, Settings, or `tiny-status disable <id>` / `enable <id>`.
+
+Appearance and grouping come from the check, not from the title:
+
+| Field | Meaning |
+|-------|---------|
+| `icon` | SF Symbol (default `network` / `globe` / `terminal` by kind) |
+| `image` | Bundled name (`GitLab`) or a path (`{config}/logo.png`) for the menu bar and table |
+| `tags` / `group` | Grouping. If omitted, tags are inferred from the title as a fallback |
+
+Do not rely on the app special-casing a product name.
+
+### Actions
+
+Any check can declare `actions[]` — buttons in the table, row menu, and inspector. Each action runs an argv `command` or opens a `url`. `when` is `always` (default), `up`, or `down`. Optional `icon` (SF Symbol) and `confirm` (alert text before run).
+
+Legacy `start` / `stop` / `open` argv fields still work if `actions` is omitted.
+
+```json
+{
+  "id": "ssh",
+  "title": "Tunnel",
+  "kind": "tcp",
+  "host": "127.0.0.1",
+  "port": 8443,
+  "actions": [
+    { "id": "start", "title": "Start", "when": "down", "command": ["/usr/bin/true"] },
+    { "id": "stop", "title": "Stop", "when": "up", "command": ["/usr/bin/true"] },
+    { "id": "open", "title": "Open", "when": "up", "url": "https://example.com" }
+  ]
+}
+```
+
+Commands are argv arrays. The app does not interpolate them through a shell.
+
+The table sorts by clicking a column header. Density defaults to **relaxed** (Settings → General). Toolbar Status and Group menus check the current value.
 
 Optional HTTP JSON: `status` (`healthy` / `degraded` / …), `version`, `checks: [{ "service", "status" }]`.
 

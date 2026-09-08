@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static var instance: AppDelegate?
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
@@ -114,29 +114,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         struct Row {
             var group: String
-            var item: NSMenuItem
+            var items: [NSMenuItem]
         }
         var rows: [Row] = []
         for t in s.tunnels {
             let it = statusRow(
                 title: t.title,
-                symbol: t.title.lowercased().contains("gitlab") ? nil : "network",
-                asset: t.title.lowercased().contains("gitlab") ? "GitLab" : nil,
-                ok: t.up,
+                symbol: CheckArt.symbol(icon: t.icon, kind: .tcp, enabled: t.enabled),
+                asset: t.image,
+                ok: t.enabled && t.up,
                 warn: false,
-                suffix: t.ms.map { String(format: "%.0f ms", $0) } ?? ""
+                suffix: !t.enabled ? "off" : t.busy ? "…" : (t.ms.map { String(format: "%.0f ms", $0) } ?? ""),
+                disabled: !t.enabled
             )
-            rows.append(Row(group: t.group, item: it))
+            var items = [it]
+            items.append(statusEnableItem(id: t.id, enabled: t.enabled))
+            if t.enabled {
+                items.append(contentsOf: statusActionItems(checkId: t.id, actions: t.actions, up: t.up, busy: t.busy))
+            }
+            rows.append(Row(group: t.group, items: items))
         }
         for d in s.deploys {
             let extra = d.checks.isEmpty ? "" : "\(d.okCount)/\(d.checks.count)"
             let it = statusRow(
                 title: d.title,
-                symbol: "globe",
-                asset: nil,
-                ok: d.health == "healthy",
-                warn: d.health == "degraded",
-                suffix: extra
+                symbol: CheckArt.symbol(icon: d.icon, kind: .http, enabled: d.enabled),
+                asset: d.image,
+                ok: d.enabled && d.health == "healthy",
+                warn: d.enabled && d.health == "degraded",
+                suffix: !d.enabled ? "off" : extra,
+                disabled: !d.enabled
             )
             if !d.checks.isEmpty {
                 let sub = NSMenu()
@@ -153,7 +160,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 it.submenu = sub
             }
-            rows.append(Row(group: d.group, item: it))
+            var items = [it]
+            items.append(statusEnableItem(id: d.id, enabled: d.enabled))
+            if d.enabled {
+                items.append(contentsOf: statusActionItems(checkId: d.id, actions: d.actions, up: d.up, busy: false))
+            }
+            rows.append(Row(group: d.group, items: items))
         }
         let pref = s.groupOrder
         let names = pref.filter { g in rows.contains { $0.group == g } }
@@ -165,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if i > 0 { m.addItem(.separator()) }
                 m.addItem(NSMenuItem.sectionHeader(title: g))
             }
-            for k in kids { m.addItem(k.item) }
+            for k in kids { for item in k.items { m.addItem(item) } }
         }
 
         m.addItem(.separator())
@@ -178,6 +190,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quit.target = NSApp
         m.addItem(quit)
         statusItem?.menu = m
+    }
+
+    private func statusActionItems(checkId: String, actions: [CheckAction], up: Bool, busy: Bool) -> [NSMenuItem] {
+        let fromRow = actions
+        let fromCheck = Store.shared.allChecks().first(where: { $0.id == checkId })?.resolvedActions() ?? []
+        let source = fromRow.isEmpty ? fromCheck : fromRow
+        return source.filter { $0.isVisible(up: up) }.map { a in
+            let it = NSMenuItem(title: a.title, action: #selector(runCheckAction(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = [checkId, a.id]
+            it.isEnabled = !busy
+            it.indentationLevel = 1
+            if let icon = a.icon {
+                it.image = NSImage(systemSymbolName: icon, accessibilityDescription: a.title)
+                it.image?.isTemplate = true
+            }
+            return it
+        }
+    }
+
+    @objc func runCheckAction(_ sender: NSMenuItem) {
+        guard let pair = sender.representedObject as? [String], pair.count == 2 else { return }
+        Store.shared.runAction(checkId: pair[0], actionId: pair[1])
+    }
+
+    private func statusEnableItem(id: String, enabled: Bool) -> NSMenuItem {
+        let it = NSMenuItem(
+            title: enabled ? "Disable" : "Enable",
+            action: #selector(toggleCheckEnabled(_:)),
+            keyEquivalent: ""
+        )
+        it.target = self
+        it.representedObject = id
+        it.indentationLevel = 1
+        it.image = NSImage(
+            systemSymbolName: enabled ? "pause.circle" : "play.circle",
+            accessibilityDescription: enabled ? "Disable" : "Enable"
+        )
+        it.image?.isTemplate = true
+        it.isEnabled = true
+        return it
+    }
+
+    @objc func toggleCheckEnabled(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let on = Store.shared.allChecks().first(where: { $0.id == id })?.isEnabled ?? true
+        Store.shared.setCheckEnabled(id, !on)
     }
 
     private func actionRow(_ title: String, _ symbol: String, _ sel: Selector, _ key: String) -> NSMenuItem {
@@ -203,18 +262,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func statusRow(
-        title: String, symbol: String?, asset: String?, ok: Bool, warn: Bool, suffix: String
+        title: String, symbol: String?, asset: String?, ok: Bool, warn: Bool, suffix: String,
+        disabled: Bool = false
     ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: #selector(showMain), keyEquivalent: "")
         item.target = self
         item.isEnabled = true
-        let color: NSColor = warn ? .systemOrange : ok ? .systemGreen : .systemRed
-        let suffixColor: NSColor = warn ? .systemOrange : ok ? .secondaryLabelColor : .systemRed
+        let color: NSColor = disabled ? .tertiaryLabelColor : warn ? .systemOrange : ok ? .systemGreen : .systemRed
+        let suffixColor: NSColor = disabled ? .tertiaryLabelColor : warn ? .systemOrange : ok ? .secondaryLabelColor : .systemRed
         let text = NSMutableAttributedString(
             string: title,
             attributes: [
                 .font: NSFont.menuFont(ofSize: 13),
-                .foregroundColor: NSColor.labelColor,
+                .foregroundColor: disabled ? NSColor.secondaryLabelColor : NSColor.labelColor,
             ]
         )
         if !suffix.isEmpty {
@@ -227,10 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ))
         }
         item.attributedTitle = text
-        if let asset,
-           let url = Bundle.main.url(forResource: asset, withExtension: "png"),
-           let img = NSImage(contentsOf: url)
-        {
+        if let img = CheckArt.nsImage(asset) {
             img.size = NSSize(width: 16, height: 16)
             item.image = img
         } else if let symbol {
@@ -270,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(.separator())
         let cols = NSMenuItem(title: "Columns", action: nil, keyEquivalent: "")
         let colsMenu = NSMenu()
+        colsMenu.delegate = self
         for col in Store.tableColumns {
             let i = NSMenuItem(title: col.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
             i.target = self
@@ -278,18 +336,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         cols.submenu = colsMenu
         viewMenu.addItem(cols)
-        let sort = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
-        let sortMenu = NSMenu()
-        for (id, title) in [("", "Manual"), ("name", "Check"), ("kind", "Type"), ("status", "Status"), ("tags", "Tags"), ("latency", "Latency"), ("version", "Version"), ("target", "Target")] {
-            let i = NSMenuItem(title: title, action: #selector(setSort(_:)), keyEquivalent: "")
-            i.target = self
-            i.representedObject = id
-            sortMenu.addItem(i)
-        }
-        sort.submenu = sortMenu
-        viewMenu.addItem(sort)
         let filter = NSMenuItem(title: "Filter Status", action: nil, keyEquivalent: "")
         let filterMenu = NSMenu()
+        filterMenu.delegate = self
         for (id, title) in [("all", "All"), ("up", "Up"), ("degraded", "Degraded"), ("down", "Down")] {
             let i = NSMenuItem(title: title, action: #selector(setFilter(_:)), keyEquivalent: "")
             i.target = self
@@ -300,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(filter)
         let group = NSMenuItem(title: "Group By", action: nil, keyEquivalent: "")
         let groupMenu = NSMenu()
+        groupMenu.delegate = self
         for (id, title) in [("tag", "Tag"), ("kind", "Kind"), ("none", "None")] {
             let i = NSMenuItem(title: title, action: #selector(setGroupBy(_:)), keyEquivalent: "")
             i.target = self
@@ -308,16 +358,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         group.submenu = groupMenu
         viewMenu.addItem(group)
-        let dens = NSMenuItem(title: "Density", action: nil, keyEquivalent: "")
-        let densMenu = NSMenu()
-        for (id, title) in [("compact", "Compact"), ("regular", "Regular")] {
-            let i = NSMenuItem(title: title, action: #selector(setDensity(_:)), keyEquivalent: "")
-            i.target = self
-            i.representedObject = id
-            densMenu.addItem(i)
-        }
-        dens.submenu = densMenu
-        viewMenu.addItem(dens)
         viewItem.submenu = viewMenu
         menubar.addItem(viewItem)
         let winItem = NSMenuItem()
@@ -334,18 +374,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Store.shared.columnVisible(id).wrappedValue = on
     }
 
-    @objc func setSort(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String else { return }
-        let s = Store.shared
-        if s.sortKey == id, !id.isEmpty {
-            s.sortAscending.toggle()
-        } else {
-            s.sortKey = id
-            s.sortAscending = true
-        }
-        s.persistTablePrefs()
-    }
-
     @objc func setFilter(_ sender: NSMenuItem) {
         Store.shared.filterStatus = sender.representedObject as? String ?? "all"
         Store.shared.persistTablePrefs()
@@ -356,9 +384,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Store.shared.persistTablePrefs()
     }
 
-    @objc func setDensity(_ sender: NSMenuItem) {
-        Store.shared.editDensity = sender.representedObject as? String ?? "compact"
-        Store.shared.persistTablePrefs()
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        for item in menu.items { _ = validateMenuItem(item) }
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -366,17 +393,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if menuItem.action == #selector(toggleColumn(_:)), let id = menuItem.representedObject as? String {
             menuItem.state = s.hiddenColumns.contains(id) ? .off : .on
         }
-        if menuItem.action == #selector(setSort(_:)), let id = menuItem.representedObject as? String {
-            menuItem.state = s.sortKey == id ? .on : .off
-        }
         if menuItem.action == #selector(setFilter(_:)), let id = menuItem.representedObject as? String {
             menuItem.state = s.filterStatus == id ? .on : .off
         }
         if menuItem.action == #selector(setGroupBy(_:)), let id = menuItem.representedObject as? String {
             menuItem.state = s.editGroupBy == id ? .on : .off
-        }
-        if menuItem.action == #selector(setDensity(_:)), let id = menuItem.representedObject as? String {
-            menuItem.state = s.editDensity == id ? .on : .off
         }
         return true
     }
@@ -388,11 +409,11 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
     weak var status: StatusController?
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .groupBy, .density, .sort, .columns, .flexibleSpace, .reload, .settings]
+        [.search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .groupBy, .density, .sort, .columns, .flexibleSpace, .reload, .settings]
+        [.search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings]
     }
 
     func toolbar(
@@ -412,6 +433,7 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
             i.toolTip = "Filter by status"
             i.image = NSImage(systemSymbolName: "line.3.horizontal.decrease.circle", accessibilityDescription: "Filter")
             let m = NSMenu()
+            m.delegate = delegate
             for (id, title) in [("all", "All"), ("up", "Up"), ("degraded", "Degraded"), ("down", "Down")] {
                 let it = NSMenuItem(title: title, action: #selector(AppDelegate.setFilter(_:)), keyEquivalent: "")
                 it.target = delegate
@@ -426,36 +448,9 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
             i.toolTip = "Group rows by tag, kind, or none"
             i.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Group")
             let m = NSMenu()
+            m.delegate = delegate
             for (id, title) in [("tag", "Tag"), ("kind", "Kind"), ("none", "None")] {
                 let it = NSMenuItem(title: title, action: #selector(AppDelegate.setGroupBy(_:)), keyEquivalent: "")
-                it.target = delegate
-                it.representedObject = id
-                m.addItem(it)
-            }
-            i.menu = m
-            return i
-        case .density:
-            let i = NSMenuToolbarItem(itemIdentifier: .density)
-            i.label = "Density"
-            i.toolTip = "Compact or regular rows"
-            i.image = NSImage(systemSymbolName: "rectangle.split.1x2", accessibilityDescription: "Density")
-            let m = NSMenu()
-            for (id, title) in [("compact", "Compact"), ("regular", "Regular")] {
-                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setDensity(_:)), keyEquivalent: "")
-                it.target = delegate
-                it.representedObject = id
-                m.addItem(it)
-            }
-            i.menu = m
-            return i
-        case .sort:
-            let i = NSMenuToolbarItem(itemIdentifier: .sort)
-            i.label = "Sort"
-            i.toolTip = "Sort by column, or manual drag order"
-            i.image = NSImage(systemSymbolName: "arrow.up.arrow.down", accessibilityDescription: "Sort")
-            let m = NSMenu()
-            for (id, title) in [("", "Manual"), ("name", "Check"), ("kind", "Type"), ("status", "Status"), ("tags", "Tags"), ("latency", "Latency"), ("version", "Version"), ("target", "Target")] {
-                let it = NSMenuItem(title: title, action: #selector(AppDelegate.setSort(_:)), keyEquivalent: "")
                 it.target = delegate
                 it.representedObject = id
                 m.addItem(it)
@@ -500,6 +495,4 @@ extension NSToolbarItem.Identifier {
     static let filter = NSToolbarItem.Identifier("filter")
     static let columns = NSToolbarItem.Identifier("columns")
     static let groupBy = NSToolbarItem.Identifier("groupBy")
-    static let density = NSToolbarItem.Identifier("density")
-    static let sort = NSToolbarItem.Identifier("sort")
 }

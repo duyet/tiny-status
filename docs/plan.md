@@ -32,7 +32,20 @@ TinyStatus started as “tunnels + deployments”. It is now a **local health-ch
 - Optional later: timeout, cwd, env from config (never commit env secrets in examples).
 - Exit 0 = up; capture short stderr for the UI.
 
-## Phase 5 — Later: plugins
+## Phase 5 — Check actions
+
+- Each check may declare `actions[]` (start/stop tunnel, open URL, restart, anything argv).
+- Shown as buttons and a row context menu.
+- `when`: `always` | `up` | `down`.
+- Keep legacy `start` / `stop` / `open` as a fallback.
+
+## Phase 6 — CLI for agents
+
+- Same process as the app: argv subcommands, no GUI.
+- Read/write live config, probe, run `actions` (start/stop/open).
+- Wrapper: `scripts/tiny-status`.
+
+## Phase 7 — Later: plugins
 
 - Out of scope until 1–4 work.
 - If added: load from a local folder, same `checks[]` shape, no network plugin install by default.

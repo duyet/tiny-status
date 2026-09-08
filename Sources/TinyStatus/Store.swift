@@ -31,7 +31,7 @@ final class Store: ObservableObject {
     @Published var gitConflict = false
     @Published var expanded: Set<String> = []
     @Published var editGroupBy: String = GroupBy.tag.rawValue
-    @Published var editDensity: String = UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "compact"
+    @Published var editDensity: String = UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "regular"
 
     var compact: Bool { editDensity != "regular" }
     @Published var settingsPage: String = "general"
@@ -42,6 +42,7 @@ final class Store: ObservableObject {
     @Published var sortAscending: Bool = UserDefaults.standard.object(forKey: "TinyStatus.sortAscending") as? Bool ?? true
 
     static let tableColumns: [(id: String, title: String)] = [
+        ("actions", "Actions"),
         ("kind", "Type"),
         ("tags", "Tags"),
         ("group", "Group"),
@@ -71,7 +72,16 @@ final class Store: ObservableObject {
     }
 
     var groupBy: GroupBy { GroupBy(rawValue: editGroupBy) ?? .tag }
-    var groupOrder: [String] { cfg.groups ?? ["Tunnel", "SG", "EU", "ZA", "dev", "prod", "Other"] }
+    var groupOrder: [String] {
+        if let g = cfg.groups, !g.isEmpty { return g }
+        var seen = Set<String>()
+        var out: [String] = []
+        for c in allChecks() {
+            let g = Tags.group(c)
+            if seen.insert(g).inserted { out.append(g) }
+        }
+        return out
+    }
 
     func toggleExpand(_ id: String) {
         if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
@@ -94,7 +104,10 @@ final class Store: ObservableObject {
     }
 
     var allOK: Bool {
-        !tunnels.isEmpty && tunnels.allSatisfy(\.up) && deploys.allSatisfy(\.up)
+        let t = tunnels.filter(\.enabled)
+        let d = deploys.filter(\.enabled)
+        if t.isEmpty, d.isEmpty { return true }
+        return t.allSatisfy(\.up) && d.allSatisfy(\.up)
     }
 
     var barSymbol: String {
@@ -109,11 +122,12 @@ final class Store: ObservableObject {
     var tunnelsUp: Int { tunnels.filter(\.up).count }
     /// Every live probe: each TCP check plus each nested health-JSON service (or the deploy itself if none yet).
     var healthCheckTotal: Int {
-        tunnels.count + deploys.reduce(0) { $0 + max($1.checks.count, 1) }
+        tunnels.filter(\.enabled).count
+            + deploys.filter(\.enabled).reduce(0) { $0 + max($1.checks.count, 1) }
     }
     var healthCheckUp: Int {
-        tunnels.filter(\.up).count
-            + deploys.reduce(0) { acc, d in
+        tunnels.filter { $0.enabled && $0.up }.count
+            + deploys.filter(\.enabled).reduce(0) { acc, d in
                 if d.checks.isEmpty { return acc + (d.up ? 1 : 0) }
                 return acc + d.checks.filter { $0.status == "healthy" }.count
             }
@@ -204,6 +218,44 @@ final class Store: ObservableObject {
         patchConfig { $0["groups"] = names }
     }
 
+    func setCheckEnabled(_ id: String, _ on: Bool) {
+        patchConfig { root in
+            for key in ["checks", "tunnels", "deployments"] {
+                guard var arr = root[key] as? [[String: Any]] else { continue }
+                for i in arr.indices where arr[i]["id"] as? String == id {
+                    arr[i]["enabled"] = on
+                }
+                root[key] = arr
+            }
+        }
+        cfg.checks = cfg.checks?.map {
+            var c = $0
+            if c.id == id { c.enabled = on }
+            return c
+        }
+        cfg.tunnels = cfg.tunnels?.map {
+            var t = $0
+            if t.id == id { t.enabled = on }
+            return t
+        }
+        cfg.deployments = cfg.deployments?.map {
+            var d = $0
+            if d.id == id { d.enabled = on }
+            return d
+        }
+        tunnels = tunnels.map {
+            var r = $0
+            if r.id == id { r.enabled = on }
+            return r
+        }
+        deploys = deploys.map {
+            var r = $0
+            if r.id == id { r.enabled = on }
+            return r
+        }
+        if on { poll() }
+    }
+
     private func patchConfig(_ edit: (inout [String: Any]) -> Void) {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: ConfigLoader.userURL),
@@ -222,20 +274,79 @@ final class Store: ObservableObject {
         cfgStamp = ConfigLoader.mtime()
         let checks = allChecks()
         tunnels = checks.filter { $0.kind == .tcp }.map {
-            TunnelRow(
+            let acts = $0.resolvedActions()
+            return TunnelRow(
                 id: $0.id, title: $0.title, up: false, busy: false, host: $0.host ?? "127.0.0.1", port: $0.port,
-                tags: Tags.resolved($0), group: Tags.group($0)
+                canStart: acts.contains { $0.id == "start" },
+                canStop: acts.contains { $0.id == "stop" },
+                canOpen: acts.contains { $0.id == "open" },
+                actions: acts,
+                tags: Tags.resolved($0), group: Tags.group($0),
+                icon: $0.icon, image: $0.image,
+                enabled: $0.isEnabled
             )
         }
         deploys = checks.filter { $0.kind != .tcp }.map {
             DeployRow(
                 id: $0.id, title: $0.title, health: "…", liveVersion: "…",
                 k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl ?? $0.url,
-                tags: Tags.resolved($0), group: Tags.group($0)
+                tags: Tags.resolved($0), group: Tags.group($0),
+                actions: $0.resolvedActions(),
+                icon: $0.icon, image: $0.image,
+                enabled: $0.isEnabled
             )
         }
         applyCache()
         restartTimer()
+        resolveOrigins()
+    }
+
+    private var resolvingOrigins = false
+    private var originResolveTried: Set<String> = []
+
+    /// One-shot: origin HTTP checks get a real health URL (or TCP ping) written back to config.
+    private func resolveOrigins() {
+        guard !resolvingOrigins else { return }
+        let pending = allChecks().filter {
+            HealthDiscover.needsConfigure($0) && !originResolveTried.contains($0.id)
+        }
+        guard !pending.isEmpty else { return }
+        resolvingOrigins = true
+        originResolveTried.formUnion(pending.map(\.id))
+        let paths = cfg.discoverPaths
+        Task.detached {
+            let done = pending.map { HealthDiscover.configure($0, paths: paths) }
+            await MainActor.run {
+                self.resolvingOrigins = false
+                self.writeResolved(done)
+            }
+        }
+    }
+
+    private func writeResolved(_ checks: [Check]) {
+        var changed = false
+        patchConfig { root in
+            for c in checks {
+                for key in ["checks", "tunnels", "deployments"] {
+                    guard var arr = root[key] as? [[String: Any]] else { continue }
+                    for i in arr.indices where arr[i]["id"] as? String == c.id {
+                        if let u = c.url { arr[i]["url"] = u }
+                        if let u = c.openUrl { arr[i]["openUrl"] = u }
+                        arr[i]["kind"] = c.kind.rawValue
+                        if let h = c.host { arr[i]["host"] = h }
+                        if let p = c.port { arr[i]["port"] = p }
+                        if c.discover == true { arr[i]["discover"] = true }
+                        if let icon = c.icon { arr[i]["icon"] = icon }
+                        changed = true
+                    }
+                    root[key] = arr
+                }
+            }
+        }
+        if changed {
+            load()
+            poll()
+        }
     }
 
     private func restartTimer() {
@@ -274,13 +385,14 @@ final class Store: ObservableObject {
     func poll() {
         let checks = allChecks()
         let busyNow = busy
+        let discoverPaths = cfg.discoverPaths
         Task.detached {
             var infos: [String: TunnelInfo] = [:]
             var drows: [String: DeployRow] = [:]
             await withTaskGroup(of: (String, TunnelInfo?, DeployRow?).self) { g in
-                for c in checks where !busyNow.contains(c.id) {
+                for c in checks where c.isEnabled && !busyNow.contains(c.id) {
                     g.addTask {
-                        let r = Probe.check(c)
+                        let r = Probe.check(c, discoverPaths: discoverPaths)
                         return (c.id, r.tunnel, r.deploy)
                     }
                 }
@@ -317,13 +429,16 @@ final class Store: ObservableObject {
                 process: info == nil ? old?.process : info?.process,
                 elapsed: info == nil ? old?.elapsed : info?.elapsed,
                 command: info == nil ? old?.command : info?.command,
-                canStart: t.start != nil,
-                canStop: t.stop != nil,
-                canOpen: t.open != nil,
+                canStart: t.resolvedActions().contains { $0.id == "start" },
+                canStop: t.resolvedActions().contains { $0.id == "stop" },
+                canOpen: t.resolvedActions().contains { $0.id == "open" },
+                actions: t.resolvedActions(),
                 spark: spark,
                 ms: info == nil ? old?.ms : info?.ms,
                 tags: Tags.resolved(t),
-                group: Tags.group(t)
+                group: Tags.group(t),
+                icon: t.icon, image: t.image,
+                enabled: t.isEnabled
             )
         }
         let prevD = Dictionary(uniqueKeysWithValues: self.deploys.map { ($0.id, $0) })
@@ -335,6 +450,10 @@ final class Store: ObservableObject {
                 )
             row.tags = Tags.resolved(d)
             row.group = Tags.group(d)
+            row.actions = d.resolvedActions()
+            row.icon = d.icon
+            row.image = d.image
+            row.enabled = d.isEnabled
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
                 s.append(DeployRow.healthScore(row.health))
@@ -378,12 +497,14 @@ final class Store: ObservableObject {
         let onDrift = a?.onVersionDrift ?? true
         let cool = a?.cooldownSeconds ?? 300
         for t in tunnels {
+            guard t.enabled else { continue }
             let old = prevT[t.id]
-            guard let old, !old.busy, t.up != old.up else { continue }
+            guard let old, old.enabled, !old.busy, t.up != old.up else { continue }
             if !t.up, onDown { ping(t.id, t.title, "Disconnected", cool) }
             if t.up, onRecover { ping(t.id, t.title, "Connected", cool) }
         }
         for d in deploys {
+            guard d.enabled else { continue }
             let old = prevD[d.id]
             let oldH = old?.health ?? "…"
             if d.health == "…" { continue }
@@ -420,23 +541,40 @@ final class Store: ObservableObject {
     }
 
     func runTunnel(_ id: String, kind: TunnelAction) {
-        guard let t = (cfg.tunnels ?? []).first(where: { $0.id == id }) else { return }
-        let cmd: [String]? = switch kind {
-        case .start: t.start
-        case .stop: t.stop
-        case .open: t.open
+        let aid = switch kind {
+        case .start: "start"
+        case .stop: "stop"
+        case .open: "open"
         }
-        guard let cmd else { return }
-        busy.insert(id)
+        runAction(checkId: id, actionId: aid)
+    }
+
+    func runAction(checkId: String, actionId: String) {
+        guard let check = allChecks().first(where: { $0.id == checkId }) else { return }
+        guard let action = check.resolvedActions().first(where: { $0.id == actionId }) else { return }
+        if let url = action.url, !url.isEmpty {
+            openURL(url)
+            return
+        }
+        guard let cmd = action.command, !cmd.isEmpty else { return }
+        if let msg = action.confirm, !msg.isEmpty {
+            let a = NSAlert()
+            a.messageText = action.title
+            a.informativeText = msg
+            a.addButton(withTitle: action.title)
+            a.addButton(withTitle: "Cancel")
+            if a.runModal() != .alertFirstButtonReturn { return }
+        }
+        busy.insert(checkId)
         tunnels = tunnels.map { r in
             var r = r
-            if r.id == id { r.busy = true }
+            if r.id == checkId { r.busy = true }
             return r
         }
         Task.detached {
             _ = Shell.run(cmd, timeout: 90)
             await MainActor.run {
-                self.busy.remove(id)
+                self.busy.remove(checkId)
                 self.poll()
             }
         }
@@ -453,7 +591,7 @@ final class Store: ObservableObject {
         let c = cfg
         editPollSeconds = c.pollSeconds ?? 30
         editGroupBy = c.groupBy ?? UserDefaults.standard.string(forKey: "TinyStatus.groupBy") ?? GroupBy.tag.rawValue
-        editDensity = c.density ?? UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "compact"
+        editDensity = c.density ?? UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "regular"
         editAlertsEnabled = c.alerts?.enabled ?? true
         editOnDown = c.alerts?.onDown ?? true
         editOnRecover = c.alerts?.onRecover ?? true
@@ -555,16 +693,13 @@ final class Store: ObservableObject {
 
     func importPaste(_ text: String) {
         let parsed = Discovery.parse(text)
+        let paths = cfg.discoverPaths
         Task.detached {
+            let httpHosts = Set(parsed.filter { $0.kind == .http }.compactMap(\.host))
             var added: [Check] = []
             for p in parsed {
-                if p.kind == .http, p.discover, let u = p.url, let url = URL(string: u),
-                   let found = Discovery.probeHTTP(base: url)
-                {
-                    added.append(found.asCheck())
-                } else {
-                    added.append(p.asCheck())
-                }
+                if p.kind == .tcp, let h = p.host, httpHosts.contains(h) { continue }
+                added.append(HealthDiscover.configure(p.asCheck(), paths: paths))
             }
             await MainActor.run { self.appendChecks(added) }
         }

@@ -41,7 +41,32 @@
       "title": "Tunnel",
       "kind": "tcp",
       "host": "127.0.0.1",
-      "port": 8443
+      "port": 8443,
+      "icon": "lock.shield",
+      "group": "Tunnel",
+      "tags": ["Tunnel"],
+      "actions": [
+        {
+          "id": "start",
+          "title": "Start",
+          "when": "down",
+          "icon": "play.fill",
+          "command": ["/usr/bin/true"]
+        },
+        {
+          "id": "stop",
+          "title": "Stop",
+          "when": "up",
+          "icon": "stop.fill",
+          "command": ["/usr/bin/true"]
+        },
+        {
+          "id": "open",
+          "title": "Open",
+          "when": "up",
+          "url": "https://example.com"
+        }
+      ]
     },
     {
       "id": "ts",

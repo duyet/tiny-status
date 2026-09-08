@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+bin="$root/TinyStatus.app/Contents/MacOS/TinyStatus"
+if [ ! -x "$bin" ]; then
+  (cd "$root" && make app)
+fi
+exec "$bin" "$@"
