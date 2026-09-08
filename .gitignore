@@ -1,4 +1,5 @@
 .build/
+/tiny-status
 .swiftpm/
 TinyStatus.app/
 *.xcodeproj

@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show SDK
+        run: xcrun --show-sdk-path && sw_vers && uname -m
+      - name: Tests
+        run: make test
+      - name: App
+        run: make app
+      - name: CLI help
+        run: TinyStatus.app/Contents/MacOS/TinyStatus help
+      - name: Example JSON
+        run: python3 -c "import json,pathlib; json.loads(pathlib.Path('tunnels.example.json').read_text()); json.loads(pathlib.Path('checks.example.json').read_text())"
