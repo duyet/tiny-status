@@ -9,9 +9,9 @@
   <key>CFBundleIdentifier</key>
   <string>net.duyet.tiny-status</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string><!-- x-release-please-version -->
+  <string>0.1.1</string><!-- x-release-please-version -->
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string><!-- x-release-please-version -->
+  <string>0.1.1</string><!-- x-release-please-version -->
   <key>CFBundleExecutable</key>
   <string>TinyStatus</string>
   <key>CFBundlePackageType</key>
