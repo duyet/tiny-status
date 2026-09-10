@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -24,3 +25,9 @@ jobs:
         run: TinyStatus.app/Contents/MacOS/TinyStatus help
       - name: Example JSON
         run: python3 -c "import json,pathlib; json.loads(pathlib.Path('tunnels.example.json').read_text()); json.loads(pathlib.Path('checks.example.json').read_text())"
+      - name: Upload TinyStatus.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: TinyStatus.app
+          path: TinyStatus.app
+          if-no-files-found: error
