@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static var instance: AppDelegate?
     private var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
+    private var menuBar: MenuBarController?
     private var settingsWindow: NSWindow?
     private var importWindow: NSWindow?
 
@@ -13,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Self.instance = self
         buildMenu()
         setupStatusItem()
+        menuBar = MenuBarController()
         showMain()
         Store.shared.poll()
     }
@@ -33,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.button?.imagePosition = .imageLeading
         statusItem?.button?.title = s.healthCheckTotal == 0 ? "" : "\(s.healthCheckUp)/\(s.healthCheckTotal)"
         statusItem?.button?.toolTip = s.healthCheckSummary
+        statusItem?.isVisible = !s.showMenuBar
         rebuildStatusMenu()
     }
 
@@ -43,12 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let vc = StatusController()
-        let w = NSWindow(contentViewController: vc)
+        let split = MainSplitController()
+        let w = NSWindow(contentViewController: split)
+        let vc = split.status
         w.title = "TinyStatus"
-        w.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        w.setContentSize(NSSize(width: 940, height: 500))
-        w.minSize = NSSize(width: 720, height: 320)
+        w.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        w.setContentSize(NSSize(width: 1180, height: 560))
+        w.minSize = NSSize(width: 900, height: 360)
         w.backgroundColor = .windowBackgroundColor
         w.titlebarAppearsTransparent = false
         ToolbarShim.shared.status = vc
@@ -59,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         w.makeKeyAndOrderFront(nil)
         mainWindow = w
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showNewTunnel() {
+        showMain()
+        if let w = mainWindow, w.attachedSheet == nil { NewTunnelSheet.present(on: w) }
     }
 
     @objc func showImport() {
@@ -317,6 +326,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Import checks…", action: #selector(showImport), keyEquivalent: "i")
+        let newTunnel = appMenu.addItem(withTitle: "New Tunnel…", action: #selector(showNewTunnel), keyEquivalent: "N")
+        newTunnel.keyEquivalentModifierMask = [.command, .shift]
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit TinyStatus", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
@@ -324,6 +335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Reload", action: #selector(reload(_:)), keyEquivalent: "r")
+        viewMenu.addItem(.separator())
+        let side = viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+        side.keyEquivalentModifierMask = [.command, .control]
+        let insp = viewMenu.addItem(withTitle: "Toggle Inspector", action: #selector(NSSplitViewController.toggleInspector(_:)), keyEquivalent: "i")
+        insp.keyEquivalentModifierMask = [.command, .option]
         viewMenu.addItem(.separator())
         let cols = NSMenuItem(title: "Columns", action: nil, keyEquivalent: "")
         let colsMenu = NSMenu()
@@ -409,11 +425,11 @@ final class ToolbarShim: NSObject, NSToolbarDelegate {
     weak var status: StatusController?
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings]
+        [.toggleSidebar, .sidebarTrackingSeparator, .search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings, .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings]
+        [.toggleSidebar, .sidebarTrackingSeparator, .search, .filter, .groupBy, .columns, .flexibleSpace, .reload, .settings, .inspectorTrackingSeparator, .flexibleSpace, .toggleInspector]
     }
 
     func toolbar(

@@ -400,6 +400,9 @@ struct ConfigWindow: View {
             Section("Polling") {
                 TextField("Interval (seconds)", value: $store.editPollSeconds, format: .number)
             }
+            Section("Menu bar") {
+                Toggle("Show in menu bar", isOn: $store.showMenuBar)
+            }
             Section("Table") {
                 Picker("Density", selection: $store.editDensity) {
                     Text("Relaxed").tag("regular")
@@ -471,7 +474,7 @@ struct ConfigWindow: View {
                 Toggle("Enable alerts", isOn: $store.editAlertsEnabled)
             }
             Section {
-                Toggle("When a check goes down", isOn: $store.editOnDown)
+                Toggle("When a check fails", isOn: $store.editOnDown)
                 Toggle("When a check recovers", isOn: $store.editOnRecover)
                 Toggle("When deploy and pod versions drift", isOn: $store.editOnDrift)
             }
@@ -555,6 +558,10 @@ private struct CheckInspector: View {
                 Toggle("Enabled", isOn: Binding(
                     get: { check.isEnabled },
                     set: { store.setCheckEnabled(check.id, $0) }
+                ))
+                Toggle("Alert when failed", isOn: Binding(
+                    get: { check.wantsAlert },
+                    set: { store.setCheckAlert(check.id, $0) }
                 ))
                 LabeledContent("Name", value: check.title)
                 LabeledContent("ID", value: check.id)

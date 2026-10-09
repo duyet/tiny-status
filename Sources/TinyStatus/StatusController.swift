@@ -24,6 +24,24 @@ private enum Col: String, CaseIterable {
     }
 }
 
+enum TableDensity {
+    static func rowSize(_ compact: Bool) -> NSTableView.RowSizeStyle { compact ? .small : .large }
+    static func indent(_ compact: Bool) -> CGFloat { compact ? 11 : 22 }
+    static func spacing(_ compact: Bool) -> NSSize {
+        compact ? NSSize(width: 4, height: 0) : NSSize(width: 12, height: 6)
+    }
+    static func icon(_ compact: Bool) -> CGFloat { compact ? 16 : 22 }
+    static func symbol(_ compact: Bool) -> CGFloat { compact ? 14 : 17 }
+    static func nameFont(_ compact: Bool, group: Bool, info: Bool) -> NSFont {
+        if info { return .systemFont(ofSize: compact ? 12 : 13) }
+        if group { return .systemFont(ofSize: compact ? 13 : 15, weight: .semibold) }
+        return .systemFont(ofSize: compact ? 13 : 14)
+    }
+    static func statusColumn(_ compact: Bool) -> CGFloat { compact ? 32 : 44 }
+    static func historyHeight(_ compact: Bool) -> CGFloat { compact ? 10 : 18 }
+    static func historySlots(_ compact: Bool) -> Int { compact ? 24 : 28 }
+}
+
 final class Node: NSObject {
     let id: String
     let title: String
@@ -90,13 +108,16 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private var dragging = false
     private let table = NSOutlineView()
     private let empty = NSTextField(wrappingLabelWithString: "No checks yet. Choose TinyStatus → Import checks…")
+    private let progress = NSProgressIndicator()
+    private let scroll = NSScrollView()
+    private var lastScope = MainState.shared.scope
+    private var restoring = false
 
     override func loadView() {
         search.placeholderString = "Filter"
         search.delegate = self
         search.sendsWholeSearchString = false
 
-        let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
@@ -105,7 +126,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
         table.delegate = self
         table.dataSource = self
-        table.rowSizeStyle = Store.shared.compact ? .small : .medium
+        table.rowSizeStyle = TableDensity.rowSize(Store.shared.compact)
         table.style = .fullWidth
         table.usesAlternatingRowBackgroundColors = true
         table.allowsColumnReordering = true
@@ -116,8 +137,8 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         table.allowsEmptySelection = true
         table.columnAutoresizingStyle = .sequentialColumnAutoresizingStyle
         table.gridStyleMask = []
-        table.intercellSpacing = NSSize(width: 6, height: 0)
-        table.indentationPerLevel = Store.shared.compact ? 11 : 16
+        table.intercellSpacing = TableDensity.spacing(Store.shared.compact)
+        table.indentationPerLevel = TableDensity.indent(Store.shared.compact)
         table.indentationMarkerFollowsCell = true
         table.autoresizesOutlineColumn = false
         table.action = #selector(clicked)
@@ -129,11 +150,11 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         ctx.delegate = self
         table.menu = ctx
 
-        addCol(.status, 32, min: 28, max: 36, flex: false)
+        addCol(.status, 44, min: 32, max: 52, flex: false)
         addCol(.name, 240, min: 140, max: 640, flex: true)
-        addCol(.actions, 168, min: 96, max: 280, flex: false)
-        addCol(.kind, 52, min: 44, max: 90, flex: false)
-        addCol(.tags, 80, min: 48, max: 240, flex: false)
+        addCol(.actions, 44, min: 36, max: 72, flex: false)
+        addCol(.kind, 64, min: 52, max: 110, flex: false)
+        addCol(.tags, 96, min: 64, max: 360, flex: false)
         addCol(.group, 72, min: 48, max: 160, flex: false)
         addCol(.history, 148, min: 100, max: 280, flex: true)
         addCol(.latency, 64, min: 48, max: 110, flex: false)
@@ -151,12 +172,27 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         empty.translatesAutoresizingMaskIntoConstraints = false
 
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 480))
-        scroll.frame = root.bounds
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        progress.style = .bar
+        progress.controlSize = .mini
+        progress.isIndeterminate = true
+        progress.isHidden = true
+        progress.wantsLayer = true
+        progress.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(scroll)
         root.addSubview(empty)
+        root.addSubview(progress)
         NSLayoutConstraint.activate([
-            empty.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            empty.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            progress.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            progress.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            progress.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            progress.heightAnchor.constraint(equalToConstant: 4),
+            empty.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            empty.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
             empty.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
         ])
         view = root
@@ -180,6 +216,16 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         store.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
             self?.reload()
         }.store(in: &bag)
+        MainState.shared.$scope.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            self?.reload()
+        }.store(in: &bag)
+        NotificationCenter.default.publisher(for: TunnelLifecycle.didChange)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reload() }
+            .store(in: &bag)
+        PollProgress.shared.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            self?.refreshProgress()
+        }.store(in: &bag)
         reload()
     }
 
@@ -201,22 +247,95 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         }
         store.persistTablePrefs()
         let keep = expandedIds()
+        let ui = MainState.shared
+        let byId = Dictionary(store.allChecks().map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func inScope(_ id: String) -> Bool {
+            guard let c = byId[id] else { return true }
+            return ui.scope.matches(c, attention: ui.attention(id))
+        }
         var items: [Node] = []
-        for t in store.tunnels {
+        for t in store.tunnels where inScope(t.id) {
             let n = tunnelNode(t)
             if matches(n) { items.append(n) }
         }
-        for d in store.deploys {
+        for d in store.deploys where inScope(d.id) {
             let n = deployNode(d)
             if matches(n) { items.append(n) }
         }
         roots = sortNodes(grouped(items))
         empty.isHidden = !items.isEmpty
+        if ui.scope != lastScope {
+            lastScope = ui.scope
+            if !Motion.reduce, let layer = scroll.layer ?? { scroll.wantsLayer = true; return scroll.layer }() {
+                let fade = CATransition()
+                fade.type = .fade
+                fade.duration = 0.18
+                layer.add(fade, forKey: "scope-fade")
+            }
+        }
+        restoring = true
         table.reloadData()
         restoreExpanded(keep)
+        restoreSelection()
+        restoring = false
         sizeColumnsToContent()
         view.window?.subtitle = items.isEmpty ? "" : "\(store.healthCheckSummary) · \(store.lastCheckedLabel)"
         AppDelegate.instance?.setStatus(ok: store.allOK)
+    }
+
+    private func restoreSelection() {
+        guard let id = MainState.shared.selectedId else { return }
+        for r in 0 ..< table.numberOfRows where (table.item(atRow: r) as? Node)?.id == id {
+            table.selectRowIndexes(IndexSet(integer: r), byExtendingSelection: false)
+            return
+        }
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !restoring else { return }
+        var id: String?
+        if let n = table.item(atRow: table.selectedRow) as? Node, n.kind != "group" {
+            var item: Any? = n
+            while let cur = item as? Node, cur.kind == "info" || cur.kind == "check" {
+                item = table.parent(forItem: cur)
+            }
+            id = (item as? Node)?.id
+        }
+        if MainState.shared.selectedId != id { MainState.shared.selectedId = id }
+    }
+
+    private func refreshProgress() {
+        let p = PollProgress.shared
+        if p.total > 0, p.done < p.total {
+            progress.layer?.removeAllAnimations()
+            progress.alphaValue = 1
+            progress.isHidden = false
+            if p.done == 0 {
+                progress.isIndeterminate = true
+                progress.startAnimation(nil)
+            } else {
+                progress.stopAnimation(nil)
+                progress.isIndeterminate = false
+                progress.maxValue = Double(p.total)
+                progress.doubleValue = Double(p.done)
+            }
+        } else if !progress.isHidden {
+            progress.stopAnimation(nil)
+            progress.isIndeterminate = false
+            progress.doubleValue = progress.maxValue
+            if Motion.reduce {
+                progress.isHidden = true
+            } else {
+                NSAnimationContext.runAnimationGroup({ ctx in
+                    ctx.duration = 0.35
+                    progress.animator().alphaValue = 0
+                }, completionHandler: { [weak self] in
+                    MainActor.assumeIsolated {
+                        if PollProgress.shared.done >= PollProgress.shared.total { self?.progress.isHidden = true }
+                    }
+                })
+            }
+        }
     }
 
     override func viewDidLayout() {
@@ -269,10 +388,11 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     private func sizeColumnsToContent() {
         fitting = true
         defer { fitting = false }
-        let body = NSFont.systemFont(ofSize: 13)
-        let small = NSFont.systemFont(ofSize: 12)
-        let tagsFont = NSFont.systemFont(ofSize: 11)
-        let header = NSFont.systemFont(ofSize: 11, weight: .medium)
+        let compact = store.compact
+        let body = TableDensity.nameFont(compact, group: false, info: false)
+        let small = NSFont.systemFont(ofSize: compact ? 12 : 13)
+        let tagsFont = NSFont.systemFont(ofSize: compact ? 11 : 12)
+        let header = NSFont.systemFont(ofSize: compact ? 11 : 12, weight: .medium)
         func textW(_ s: String, _ font: NSFont) -> CGFloat {
             ceil((s as NSString).size(withAttributes: [.font: font]).width)
         }
@@ -284,12 +404,13 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         var verW: CGFloat = textW("Version", header) + 20
         func walk(_ nodes: [Node], level: Int) {
             for n in nodes {
-                nameW = max(nameW, 28 + CGFloat(level) * table.indentationPerLevel + 18 + textW(n.title, n.kind == "group" ? .systemFont(ofSize: 13, weight: .semibold) : body) + 12)
+                nameW = max(nameW, 28 + CGFloat(level) * table.indentationPerLevel + TableDensity.icon(compact) + 10 + textW(n.title, n.kind == "group" ? TableDensity.nameFont(compact, group: true, info: false) : body) + 16)
                 if n.kind != "info" && n.kind != "group" {
-                    kindW = max(kindW, textW(n.kind, small) + 20)
+                    kindW = max(kindW, textW(n.kind, tagsFont) + 24)
                 }
                 if !n.tags.isEmpty, n.kind != "group", n.kind != "info" {
-                    tagsW = max(tagsW, textW(n.tags.joined(separator: "  "), tagsFont) + 20)
+                    let chips = n.tags.reduce(CGFloat(0)) { $0 + textW($1, tagsFont) + 16 }
+                    tagsW = max(tagsW, chips + CGFloat(max(0, n.tags.count - 1)) * 4 + 12)
                 }
                 if !n.group.isEmpty, n.kind != "group", n.kind != "info" {
                     groupW = max(groupW, textW(n.group, small) + 20)
@@ -310,8 +431,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             guard let c = table.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier(id.rawValue)), !c.isHidden else { return }
             c.width = min(c.maxWidth, max(c.minWidth, w))
         }
-        set(.status, 32)
+        set(.status, TableDensity.statusColumn(store.compact))
         set(.name, nameW)
+        set(.actions, 44)
         set(.kind, kindW)
         set(.tags, tagsW)
         set(.group, groupW)
@@ -376,9 +498,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
 
     private func applyDensity() {
         let compact = store.compact
-        table.rowSizeStyle = compact ? .small : .medium
-        table.indentationPerLevel = compact ? 11 : 16
-        table.intercellSpacing = NSSize(width: compact ? 4 : 6, height: 0)
+        table.rowSizeStyle = TableDensity.rowSize(compact)
+        table.indentationPerLevel = TableDensity.indent(compact)
+        table.intercellSpacing = TableDensity.spacing(compact)
     }
 
     private func formatLatency(_ ms: Double?) -> String {
@@ -397,10 +519,14 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         if let pid = t.pid { kids.append(detail(t.id, "PID", pid)) }
         if let e = t.elapsed { kids.append(detail(t.id, "Uptime", e)) }
         if let c = t.command { kids.append(detail(t.id, "Command", c)) }
+        let life = TunnelLifecycle.shared.state(for: t.id)
+        let starting: Bool = if case .starting = life { true } else { false }
+        let lifeText = life == .stopped ? "" : TunnelLifecycle.text(life, port: t.port)
         return Node(
             id: t.id, title: t.title, kind: "TCP",
-            status: !t.enabled ? "Off" : t.busy ? "Checking" : (t.up ? "Up" : "Down"),
-            ok: t.enabled && t.up, warn: false, spark: t.spark, latency: t.enabled ? lat : "", target: target, url: nil, leaf: false,
+            status: !t.enabled ? "Off" : starting ? "Starting" : t.busy ? "Checking" : (t.up ? "Up" : "Down"),
+            ok: t.enabled && t.up, warn: false, spark: t.spark, latency: t.enabled ? lat : "",
+            target: lifeText.isEmpty ? target : "\(target) · \(lifeText)", url: nil, leaf: false,
             tags: t.tags, group: t.group, version: "",
             actions: t.enabled ? t.actions : [],
             enabled: t.enabled,
@@ -681,19 +807,20 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         let info = r.kind == "info"
         switch col {
         case .status:
-            let cell = iconCell(outlineView, id: "status")
-            cell.textField?.isHidden = true
-            cell.imageView?.isHidden = info
-            cell.imageView?.image = info ? nil : statusImage(r)
-            cell.toolTip = r.status
+            let id = NSUserInterfaceItemIdentifier("status-dot")
+            let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? StatusCell) ?? StatusCell()
+            cell.identifier = id
+            cell.apply(
+                image: info ? nil : statusImage(r),
+                status: r.status,
+                checking: r.status == "Checking" || r.status == "Starting",
+                compact: store.compact
+            )
             return cell
         case .name:
             let id = NSUserInterfaceItemIdentifier("name-act")
             let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? NameCell) ?? NameCell()
             cell.identifier = id
-            let shown = (info || r.kind == "group" || r.kind == "check")
-                ? []
-                : r.actions.filter { $0.isVisible(up: r.ok && !r.warn) }
             cell.apply(
                 title: r.title,
                 info: info,
@@ -703,22 +830,22 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
                 icon: r.icon,
                 kind: r.kind,
                 checkId: r.id,
-                actions: shown,
-                busy: r.status == "Checking"
+                actions: [],
+                busy: r.status == "Checking",
+                compact: store.compact
             )
             return cell
         case .kind:
-            let cell = textCell(outlineView, id: "kind")
-            cell.textField?.stringValue = info || r.kind == "group" ? "" : r.kind
-            cell.textField?.font = .systemFont(ofSize: 12)
-            cell.textField?.textColor = .secondaryLabelColor
+            let id = NSUserInterfaceItemIdentifier("kind-chip")
+            let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? TagsCell) ?? TagsCell()
+            cell.identifier = id
+            cell.apply(info || r.kind == "group" ? [] : [r.kind], muted: true)
             return cell
         case .tags:
-            let cell = textCell(outlineView, id: "tags")
-            cell.textField?.stringValue = r.kind == "group" || r.kind == "info" ? "" : r.tags.joined(separator: "  ")
-            cell.textField?.font = .systemFont(ofSize: 11)
-            cell.textField?.textColor = .tertiaryLabelColor
-            cell.toolTip = r.tags.joined(separator: ", ")
+            let id = NSUserInterfaceItemIdentifier("tags-chip")
+            let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? TagsCell) ?? TagsCell()
+            cell.identifier = id
+            cell.apply(r.kind == "group" || r.kind == "info" ? [] : r.tags, muted: false)
             return cell
         case .group:
             let cell = textCell(outlineView, id: "group")
@@ -759,8 +886,10 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             let id = NSUserInterfaceItemIdentifier("actions")
             let cell = (outlineView.makeView(withIdentifier: id, owner: self) as? ActionCell) ?? ActionCell()
             cell.identifier = id
-            let shown = r.actions.filter { $0.isVisible(up: r.ok && !r.warn) }
-            cell.apply(checkId: r.id, actions: shown, enabled: r.status != "Checking")
+            let shown = (r.kind == "group" || r.kind == "info")
+                ? []
+                : r.actions.filter { $0.isVisible(up: r.ok && !r.warn) }
+            cell.apply(checkId: r.id, actions: shown, enabled: r.enabled && r.status != "Checking")
             return cell
         }
     }
@@ -777,7 +906,7 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
         } else if r.ok {
             name = "checkmark.circle.fill"
             color = .systemGreen
-        } else if r.status == "Checking" {
+        } else if r.status == "Checking" || r.status == "Starting" {
             name = "ellipsis.circle.fill"
             color = .tertiaryLabelColor
         } else {
@@ -785,39 +914,9 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
             color = .systemRed
         }
         let img = NSImage(systemSymbolName: name, accessibilityDescription: r.status)
-        let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        let cfg = NSImage.SymbolConfiguration(pointSize: TableDensity.symbol(store.compact), weight: .medium)
             .applying(.init(paletteColors: [color]))
         return img?.withSymbolConfiguration(cfg)
-    }
-
-    private func iconCell(_ tableView: NSOutlineView, id: String) -> NSTableCellView {
-        let ident = NSUserInterfaceItemIdentifier(id)
-        if let v = tableView.makeView(withIdentifier: ident, owner: self) as? NSTableCellView { return v }
-        let v = NSTableCellView()
-        v.identifier = ident
-        let iv = NSImageView()
-        iv.translatesAutoresizingMaskIntoConstraints = false
-        iv.imageScaling = .scaleProportionallyDown
-        let tf = NSTextField(labelWithString: "")
-        tf.translatesAutoresizingMaskIntoConstraints = false
-        tf.lineBreakMode = .byTruncatingTail
-        tf.drawsBackground = false
-        tf.isBezeled = false
-        tf.isEditable = false
-        v.addSubview(iv)
-        v.addSubview(tf)
-        v.imageView = iv
-        v.textField = tf
-        NSLayoutConstraint.activate([
-            iv.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: 2),
-            iv.centerYAnchor.constraint(equalTo: v.centerYAnchor),
-            iv.widthAnchor.constraint(equalToConstant: 16),
-            iv.heightAnchor.constraint(equalToConstant: 16),
-            tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 6),
-            tf.trailingAnchor.constraint(equalTo: v.trailingAnchor, constant: -4),
-            tf.centerYAnchor.constraint(equalTo: v.centerYAnchor),
-        ])
-        return v
     }
 
     private func textCell(_ tableView: NSOutlineView, id: String) -> NSTableCellView {
@@ -879,11 +978,78 @@ final class StatusController: NSViewController, NSOutlineViewDataSource, NSOutli
     }
 }
 
+private final class StatusCell: NSTableCellView {
+    private var lastStatus: String?
+    private var iconSize: NSLayoutConstraint?
+    private var iconHeight: NSLayoutConstraint?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        let iv = NSImageView()
+        iv.translatesAutoresizingMaskIntoConstraints = false
+        iv.wantsLayer = true
+        iv.imageScaling = .scaleProportionallyDown
+        addSubview(iv)
+        imageView = iv
+        let w = iv.widthAnchor.constraint(equalToConstant: 22)
+        let h = iv.heightAnchor.constraint(equalToConstant: 22)
+        iconSize = w
+        iconHeight = h
+        NSLayoutConstraint.activate([
+            iv.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iv.centerYAnchor.constraint(equalTo: centerYAnchor),
+            w, h,
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func apply(image: NSImage?, status: String, checking: Bool, compact: Bool) {
+        let size = TableDensity.icon(compact)
+        iconSize?.constant = size
+        iconHeight?.constant = size
+        imageView?.isHidden = image == nil
+        let changed = lastStatus != nil && lastStatus != status
+        lastStatus = status
+        imageView?.image = image
+        toolTip = status
+        imageView?.layer?.removeAnimation(forKey: "status-pulse")
+        imageView?.layer?.removeAnimation(forKey: "status-check")
+        guard let layer = imageView?.layer, !Motion.reduce else { return }
+        if checking {
+            let pulse = CABasicAnimation(keyPath: "opacity")
+            pulse.fromValue = 0.35
+            pulse.toValue = 1
+            pulse.duration = 0.7
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.add(pulse, forKey: "status-check")
+        } else if changed {
+            let scale = CAKeyframeAnimation(keyPath: "transform.scale")
+            scale.values = [0.25, 1.06, 1]
+            scale.keyTimes = [0, 0.72, 1]
+            scale.duration = 0.32
+            scale.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = 0.28
+            fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+            layer.add(scale, forKey: "status-pulse")
+            layer.add(fade, forKey: "status-fade")
+        }
+    }
+}
+
 private final class NameCell: NSTableCellView {
     private var checkId = ""
     private var actions: [CheckAction] = []
     private let stack = NSStackView()
     private var stackWidth: NSLayoutConstraint?
+    private var iconW: NSLayoutConstraint?
+    private var iconH: NSLayoutConstraint?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -907,15 +1073,18 @@ private final class NameCell: NSTableCellView {
         textField = tf
         let sw = stack.widthAnchor.constraint(equalToConstant: 0)
         stackWidth = sw
+        let iw = iv.widthAnchor.constraint(equalToConstant: 16)
+        let ih = iv.heightAnchor.constraint(equalToConstant: 16)
+        iconW = iw
+        iconH = ih
         NSLayoutConstraint.activate([
-            iv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            iv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             iv.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iv.widthAnchor.constraint(equalToConstant: 16),
-            iv.heightAnchor.constraint(equalToConstant: 16),
-            tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 6),
+            iw, ih,
+            tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: 8),
             tf.centerYAnchor.constraint(equalTo: centerYAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: tf.trailingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             sw,
         ])
@@ -927,16 +1096,19 @@ private final class NameCell: NSTableCellView {
     func apply(
         title: String, info: Bool, group: Bool, enabled: Bool,
         image: String?, icon: String?, kind: String,
-        checkId: String, actions: [CheckAction], busy: Bool
+        checkId: String, actions: [CheckAction], busy: Bool, compact: Bool
     ) {
         self.checkId = checkId
         self.actions = actions
+        let side = TableDensity.icon(compact)
+        iconW?.constant = side
+        iconH?.constant = side
         textField?.stringValue = title
-        textField?.font = info ? .systemFont(ofSize: 12) : group ? .systemFont(ofSize: 13, weight: .semibold) : .systemFont(ofSize: 13)
+        textField?.font = TableDensity.nameFont(compact, group: group, info: info)
         textField?.textColor = info || !enabled ? .secondaryLabelColor : .labelColor
         imageView?.isHidden = info
         if let img = CheckArt.nsImage(image) {
-            img.size = NSSize(width: 16, height: 16)
+            img.size = NSSize(width: side, height: side)
             imageView?.image = img
             imageView?.contentTintColor = nil
         } else {
@@ -979,11 +1151,11 @@ private final class HistoryCell: NSTableCellView {
         super.init(frame: frameRect)
         beat.translatesAutoresizingMaskIntoConstraints = false
         addSubview(beat)
-        let h = beat.heightAnchor.constraint(equalToConstant: 12)
+        let h = beat.heightAnchor.constraint(equalToConstant: 18)
         height = h
         NSLayoutConstraint.activate([
-            beat.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            beat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            beat.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            beat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             beat.centerYAnchor.constraint(equalTo: centerYAnchor),
             h,
         ])
@@ -993,15 +1165,55 @@ private final class HistoryCell: NSTableCellView {
 
     func apply(_ spark: [Double], compact: Bool) {
         beat.values = spark
-        beat.slots = compact ? 24 : 32
-        height?.constant = compact ? 10 : 14
+        beat.slots = TableDensity.historySlots(compact)
+        height?.constant = TableDensity.historyHeight(compact)
         toolTip = spark.isEmpty ? "No history yet" : "Last \(spark.count) checks"
     }
 }
 
-private final class ActionCell: NSTableCellView {
-    private var checkId = ""
-    private var actions: [CheckAction] = []
+private final class TagChip: NSView {
+    private let label = NSTextField(labelWithString: "")
+    var muted = false
+    var text = "" {
+        didSet { label.stringValue = text; needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = false
+        label.font = .systemFont(ofSize: 10, weight: .medium)
+        label.drawsBackground = false
+        label.isBezeled = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 7),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -7),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
+        ])
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override var intrinsicContentSize: NSSize {
+        let s = label.intrinsicContentSize
+        return NSSize(width: s.width + 14, height: 18)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let (bg, fg) = muted
+            ? (NSColor.quaternaryLabelColor.withAlphaComponent(0.18), NSColor.secondaryLabelColor)
+            : TagTint.colors(text)
+        label.textColor = fg
+        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: r, xRadius: r.height / 2, yRadius: r.height / 2)
+        bg.setFill()
+        path.fill()
+    }
+}
+
+private final class TagsCell: NSTableCellView {
     private let stack = NSStackView()
 
     override init(frame frameRect: NSRect) {
@@ -1020,31 +1232,71 @@ private final class ActionCell: NSTableCellView {
 
     required init?(coder: NSCoder) { nil }
 
-    func apply(checkId: String, actions: [CheckAction], enabled: Bool) {
-        self.checkId = checkId
-        self.actions = actions
+    func apply(_ tags: [String], muted: Bool) {
         stack.arrangedSubviews.forEach {
             stack.removeArrangedSubview($0)
             $0.removeFromSuperview()
         }
-        for (i, a) in actions.enumerated() {
-            let b = NSButton(title: a.title, target: self, action: #selector(tap(_:)))
-            b.bezelStyle = .accessoryBarAction
-            b.controlSize = .small
-            b.font = .systemFont(ofSize: 11)
-            b.tag = i
-            b.isEnabled = enabled
-            b.toolTip = a.title
-            if let icon = a.icon, let img = NSImage(systemSymbolName: icon, accessibilityDescription: a.title) {
-                b.image = img
-                b.imagePosition = .imageLeading
-            }
-            stack.addArrangedSubview(b)
+        for t in tags {
+            let chip = TagChip()
+            chip.muted = muted
+            chip.text = t
+            stack.addArrangedSubview(chip)
         }
+        toolTip = tags.joined(separator: ", ")
+    }
+}
+
+private final class ActionCell: NSTableCellView {
+    private var checkId = ""
+    private var actions: [CheckAction] = []
+    private let button = NSPopUpButton()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        button.pullsDown = true
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: 11)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.target = self
+        button.action = #selector(picked(_:))
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            button.centerYAnchor.constraint(equalTo: centerYAnchor),
+            button.widthAnchor.constraint(equalToConstant: 36),
+        ])
     }
 
-    @objc private func tap(_ sender: NSButton) {
-        guard actions.indices.contains(sender.tag) else { return }
-        Store.shared.runAction(checkId: checkId, actionId: actions[sender.tag].id)
+    required init?(coder: NSCoder) { nil }
+
+    func apply(checkId: String, actions: [CheckAction], enabled: Bool) {
+        self.checkId = checkId
+        self.actions = actions
+        button.removeAllItems()
+        button.isHidden = actions.isEmpty
+        button.isEnabled = enabled && !actions.isEmpty
+        guard !actions.isEmpty else { return }
+        button.addItem(withTitle: "")
+        let head = button.item(at: 0)
+        head?.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Actions")
+        head?.title = ""
+        for a in actions {
+            button.addItem(withTitle: a.title)
+            let item = button.lastItem
+            item?.representedObject = a.id
+            if let icon = a.icon {
+                item?.image = NSImage(systemSymbolName: icon, accessibilityDescription: a.title)
+            }
+        }
+        button.toolTip = actions.map(\.title).joined(separator: ", ")
+        button.selectItem(at: 0)
+    }
+
+    @objc private func picked(_ sender: NSPopUpButton) {
+        defer { sender.selectItem(at: 0) }
+        guard let id = sender.selectedItem?.representedObject as? String else { return }
+        Store.shared.runAction(checkId: checkId, actionId: id)
     }
 }

@@ -33,6 +33,10 @@ final class Store: ObservableObject {
     @Published var editGroupBy: String = GroupBy.tag.rawValue
     @Published var editDensity: String = UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "regular"
 
+    @Published var showMenuBar: Bool = UserDefaults.standard.object(forKey: "TinyStatus.showMenuBar") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showMenuBar, forKey: "TinyStatus.showMenuBar") }
+    }
+
     var compact: Bool { editDensity != "regular" }
     @Published var settingsPage: String = "general"
     @Published var settingsCheckId: String?
@@ -256,6 +260,33 @@ final class Store: ObservableObject {
         if on { poll() }
     }
 
+    func setCheckAlert(_ id: String, _ on: Bool) {
+        patchConfig { root in
+            for key in ["checks", "tunnels", "deployments"] {
+                guard var arr = root[key] as? [[String: Any]] else { continue }
+                for i in arr.indices where arr[i]["id"] as? String == id {
+                    arr[i]["alert"] = on
+                }
+                root[key] = arr
+            }
+        }
+        cfg.checks = cfg.checks?.map {
+            var c = $0
+            if c.id == id { c.alert = on }
+            return c
+        }
+        cfg.tunnels = cfg.tunnels?.map {
+            var t = $0
+            if t.id == id { t.alert = on }
+            return t
+        }
+        cfg.deployments = cfg.deployments?.map {
+            var d = $0
+            if d.id == id { d.alert = on }
+            return d
+        }
+    }
+
     private func patchConfig(_ edit: (inout [String: Any]) -> Void) {
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: ConfigLoader.userURL),
@@ -282,7 +313,7 @@ final class Store: ObservableObject {
                 canOpen: acts.contains { $0.id == "open" },
                 actions: acts,
                 tags: Tags.resolved($0), group: Tags.group($0),
-                icon: $0.icon, image: $0.image,
+                icon: $0.icon, image: displayImage($0),
                 enabled: $0.isEnabled
             )
         }
@@ -292,13 +323,45 @@ final class Store: ObservableObject {
                 k8sVersion: "…", k8sLiveVersion: "…", checks: [], openUrl: $0.openUrl ?? $0.url,
                 tags: Tags.resolved($0), group: Tags.group($0),
                 actions: $0.resolvedActions(),
-                icon: $0.icon, image: $0.image,
+                icon: $0.icon, image: displayImage($0),
                 enabled: $0.isEnabled
             )
         }
         applyCache()
         restartTimer()
         resolveOrigins()
+        hydrateFavicons()
+    }
+
+    /// Explicit `image` wins; otherwise a cached site favicon for HTTP checks.
+    private func displayImage(_ c: Check) -> String? {
+        if let i = c.image, !i.isEmpty { return i }
+        if c.kind == .http { return Favicon.cached(url: c.openUrl ?? c.url) }
+        return nil
+    }
+
+    private func hydrateFavicons() {
+        let pending = allChecks().filter { c in
+            c.kind == .http && (c.image == nil || c.image?.isEmpty == true)
+                && Favicon.cached(url: c.openUrl ?? c.url) == nil
+        }
+        guard !pending.isEmpty else { return }
+        Task.detached {
+            for c in pending {
+                _ = Favicon.fetch(url: c.openUrl ?? c.url)
+            }
+            await MainActor.run { self.applyFaviconPaths() }
+        }
+    }
+
+    private func applyFaviconPaths() {
+        deploys = deploys.map { r in
+            var r = r
+            if let c = allChecks().first(where: { $0.id == r.id }) {
+                r.image = displayImage(c)
+            }
+            return r
+        }
     }
 
     private var resolvingOrigins = false
@@ -386,6 +449,7 @@ final class Store: ObservableObject {
         let checks = allChecks()
         let busyNow = busy
         let discoverPaths = cfg.discoverPaths
+        PollProgress.shared.begin(checks.filter { $0.isEnabled && !busyNow.contains($0.id) }.count)
         Task.detached {
             var infos: [String: TunnelInfo] = [:]
             var drows: [String: DeployRow] = [:]
@@ -397,6 +461,7 @@ final class Store: ObservableObject {
                     }
                 }
                 for await x in g {
+                    await MainActor.run { PollProgress.shared.tick() }
                     if let t = x.1 { infos[x.0] = t }
                     if let d = x.2 { drows[x.0] = d }
                 }
@@ -437,7 +502,7 @@ final class Store: ObservableObject {
                 ms: info == nil ? old?.ms : info?.ms,
                 tags: Tags.resolved(t),
                 group: Tags.group(t),
-                icon: t.icon, image: t.image,
+                icon: t.icon, image: displayImage(t),
                 enabled: t.isEnabled
             )
         }
@@ -452,7 +517,7 @@ final class Store: ObservableObject {
             row.group = Tags.group(d)
             row.actions = d.resolvedActions()
             row.icon = d.icon
-            row.image = d.image
+            row.image = displayImage(d)
             row.enabled = d.isEnabled
             if row.health != "…" {
                 var s = prevD[d.id]?.spark ?? row.spark
@@ -496,23 +561,33 @@ final class Store: ObservableObject {
         let onRecover = a?.onRecover ?? true
         let onDrift = a?.onVersionDrift ?? true
         let cool = a?.cooldownSeconds ?? 300
+        let checks = Dictionary(uniqueKeysWithValues: allChecks().map { ($0.id, $0) })
         for t in tunnels {
-            guard t.enabled else { continue }
+            let want = checks[t.id]?.alert
             let old = prevT[t.id]
-            guard let old, old.enabled, !old.busy, t.up != old.up else { continue }
-            if !t.up, onDown { ping(t.id, t.title, "Disconnected", cool) }
-            if t.up, onRecover { ping(t.id, t.title, "Connected", cool) }
+            guard let old, !old.busy else { continue }
+            switch Check.shouldAlert(
+                globalEnabled: true, onDown: onDown, onRecover: onRecover,
+                checkAlert: want, enabled: t.enabled, wasUp: old.enabled ? old.up : nil, isUp: t.up
+            ) {
+            case "down": ping(t.id, t.title, "Failed", cool)
+            case "recover": ping(t.id, t.title, "Recovered", cool)
+            default: break
+            }
         }
         for d in deploys {
-            guard d.enabled else { continue }
+            let want = checks[d.id]?.alert
             let old = prevD[d.id]
-            let oldH = old?.health ?? "…"
             if d.health == "…" { continue }
-            if onDown, oldH == "healthy", !d.up {
-                ping(d.id, d.title, "Health \(d.health)", cool)
-            }
-            if onRecover, oldH != "healthy", oldH != "…", d.up {
-                ping(d.id, d.title, "Healthy again", cool)
+            let wasKnown = old.map { $0.health != "…" } ?? false
+            let wasUp = wasKnown ? old?.up : nil
+            switch Check.shouldAlert(
+                globalEnabled: true, onDown: onDown, onRecover: onRecover,
+                checkAlert: want, enabled: d.enabled, wasUp: wasUp, isUp: d.up
+            ) {
+            case "down": ping(d.id, d.title, "Failed — \(d.health)", cool)
+            case "recover": ping(d.id, d.title, "Recovered", cool)
+            default: break
             }
             if onDrift {
                 let drift = d.k8sVersion != "—" && d.k8sLiveVersion != "—"
@@ -564,6 +639,11 @@ final class Store: ObservableObject {
             a.addButton(withTitle: action.title)
             a.addButton(withTitle: "Cancel")
             if a.runModal() != .alertFirstButtonReturn { return }
+        }
+        if check.kind == .tcp, check.port != nil, actionId == "start" || actionId == "stop" {
+            if actionId == "start" { TunnelLifecycle.shared.start(check) } else { TunnelLifecycle.shared.stop(check) }
+            poll()
+            return
         }
         busy.insert(checkId)
         tunnels = tunnels.map { r in

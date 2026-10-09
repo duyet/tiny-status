@@ -76,6 +76,14 @@
       "port": 22
     },
     {
+      "id": "noisy",
+      "title": "Local toy",
+      "kind": "tcp",
+      "host": "127.0.0.1",
+      "port": 9,
+      "alert": false
+    },
+    {
       "id": "cmd",
       "title": "Custom",
       "kind": "command",

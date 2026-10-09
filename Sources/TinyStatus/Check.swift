@@ -57,6 +57,59 @@ struct CheckAction: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+/// Stable pastel for a tag, in the same spirit as shadcn Badge (soft fill + saturated label).
+enum TagTint {
+    enum Slot: String, CaseIterable {
+        case blue, green, sky, purple, red, orange, yellow, gray
+    }
+
+    static func slot(_ tag: String) -> Slot {
+        let n = tag.lowercased()
+        if ["prod", "production", "live", "down", "error"].contains(n) { return .red }
+        if ["staging", "stage", "warn", "warning"].contains(n) { return .orange }
+        if ["dev", "development", "up", "ok"].contains(n) { return .green }
+        if ["tunnel", "tcp", "ssh"].contains(n) { return .blue }
+        if ["http", "web", "api"].contains(n) { return .sky }
+        if ["command", "cli", "script"].contains(n) { return .purple }
+        if ["eu"].contains(n) { return .blue }
+        if ["sg"].contains(n) { return .green }
+        if ["za"].contains(n) { return .yellow }
+        if ["us", "uk"].contains(n) { return .purple }
+        var h: UInt64 = 5381
+        for b in n.utf8 { h = ((h << 5) &+ h) &+ UInt64(b) }
+        let all = Slot.allCases
+        return all[Int(h % UInt64(all.count))]
+    }
+
+    static func colors(_ tag: String) -> (bg: NSColor, fg: NSColor) {
+        let appearance = NSApp?.effectiveAppearance ?? NSAppearance.currentDrawing()
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        switch slot(tag) {
+        case .blue: return pair(dark, 0.82, 0.90, 0.99, 0.12, 0.38, 0.82, 0.18, 0.32, 0.52, 0.62, 0.78, 1.0)
+        case .green: return pair(dark, 0.84, 0.95, 0.88, 0.08, 0.48, 0.30, 0.14, 0.32, 0.24, 0.52, 0.88, 0.68)
+        case .sky: return pair(dark, 0.84, 0.95, 0.98, 0.04, 0.52, 0.68, 0.12, 0.32, 0.40, 0.55, 0.88, 0.95)
+        case .purple: return pair(dark, 0.93, 0.88, 0.98, 0.45, 0.22, 0.72, 0.28, 0.20, 0.42, 0.82, 0.70, 1.0)
+        case .red: return pair(dark, 0.99, 0.90, 0.90, 0.72, 0.14, 0.18, 0.42, 0.16, 0.18, 1.0, 0.70, 0.72)
+        case .orange: return pair(dark, 1.0, 0.93, 0.85, 0.72, 0.38, 0.04, 0.42, 0.26, 0.10, 1.0, 0.78, 0.50)
+        case .yellow: return pair(dark, 1.0, 0.96, 0.82, 0.62, 0.48, 0.04, 0.40, 0.34, 0.10, 0.98, 0.88, 0.45)
+        case .gray: return pair(dark, 0.93, 0.93, 0.95, 0.32, 0.32, 0.36, 0.28, 0.28, 0.30, 0.82, 0.82, 0.84)
+        }
+    }
+
+    private static func pair(
+        _ dark: Bool,
+        _ lr: CGFloat, _ lg: CGFloat, _ lb: CGFloat,
+        _ lfr: CGFloat, _ lfg: CGFloat, _ lfb: CGFloat,
+        _ dr: CGFloat, _ dg: CGFloat, _ db: CGFloat,
+        _ dfr: CGFloat, _ dfg: CGFloat, _ dfb: CGFloat
+    ) -> (NSColor, NSColor) {
+        if dark {
+            return (NSColor(srgbRed: dr, green: dg, blue: db, alpha: 1), NSColor(srgbRed: dfr, green: dfg, blue: dfb, alpha: 1))
+        }
+        return (NSColor(srgbRed: lr, green: lg, blue: lb, alpha: 1), NSColor(srgbRed: lfr, green: lfg, blue: lfb, alpha: 1))
+    }
+}
+
 enum Tags {
     static func inferred(title: String, kind: CheckKind) -> [String] {
         let n = title.lowercased()
@@ -113,8 +166,28 @@ struct Check: Codable, Identifiable, Sendable {
     var image: String?
     /// Missing or true = probed. false = skip probe, still listed.
     var enabled: Bool?
+    /// Missing or true = notify on fail/recover (still subject to global `alerts`). false = mute this check.
+    var alert: Bool?
 
     var isEnabled: Bool { enabled != false }
+    var wantsAlert: Bool { alert != false }
+
+    /// Whether to post a notification for this check's new state.
+    static func shouldAlert(
+        globalEnabled: Bool,
+        onDown: Bool,
+        onRecover: Bool,
+        checkAlert: Bool?,
+        enabled: Bool,
+        wasUp: Bool?,
+        isUp: Bool
+    ) -> String? {
+        guard globalEnabled, enabled, checkAlert != false else { return nil }
+        guard let wasUp else { return nil }
+        if wasUp, !isUp { return onDown ? "down" : nil }
+        if !wasUp, isUp { return onRecover ? "recover" : nil }
+        return nil
+    }
 
     /// Config `actions[]`, plus legacy `start` / `stop` / `open` if no list is set.
     func resolvedActions() -> [CheckAction] {
@@ -137,7 +210,7 @@ struct Check: Codable, Identifiable, Sendable {
             id: t.id, title: t.title, kind: .tcp,
             host: t.probeHost ?? "127.0.0.1", port: t.probePort,
             start: t.start, stop: t.stop, open: t.open,
-            tags: t.tags, group: t.group, icon: t.icon, image: t.image, enabled: t.enabled
+            tags: t.tags, group: t.group, icon: t.icon, image: t.image, enabled: t.enabled, alert: t.alert
         )
     }
 
@@ -145,7 +218,7 @@ struct Check: Codable, Identifiable, Sendable {
         Check(
             id: d.id, title: d.title, kind: .http,
             url: d.healthUrl, k8s: d.k8s, k8sLive: d.k8sLive, openUrl: d.openUrl,
-            tags: d.tags, group: d.group, icon: d.icon, image: d.image, enabled: d.enabled
+            tags: d.tags, group: d.group, icon: d.icon, image: d.image, enabled: d.enabled, alert: d.alert
         )
     }
 }

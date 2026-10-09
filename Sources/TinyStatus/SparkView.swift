@@ -19,7 +19,7 @@ final class HeartbeatView: NSView {
         for (i, v) in shown.enumerated() {
             let x = origin + CGFloat(i) * (w + gap)
             let r = NSRect(x: x, y: 1, width: w, height: bounds.height - 2)
-            let path = NSBezierPath(roundedRect: r, xRadius: 1, yRadius: 1)
+            let path = NSBezierPath(roundedRect: r, xRadius: 1.5, yRadius: 1.5)
             (v >= 0.99 ? NSColor.systemGreen : v >= 0.4 ? NSColor.systemOrange : NSColor.systemRed).setFill()
             path.fill()
         }

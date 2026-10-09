@@ -16,7 +16,7 @@ app:
 	mkdir -p $(APP)/Contents/MacOS
 	swiftc -parse-as-library $(SRC) -o $(BIN) \
 		-sdk "$(SDK)" -target "$(TARGET)" \
-		-framework SwiftUI -framework AppKit -framework UserNotifications
+		-framework SwiftUI -framework AppKit -framework UserNotifications -framework Network
 	cp Info.plist $(APP)/Contents/Info.plist
 	mkdir -p $(APP)/Contents/Resources
 	cp Resources/AppIcon.icns $(APP)/Contents/Resources/AppIcon.icns
@@ -36,5 +36,5 @@ test:
 	mkdir -p .build
 	swiftc -parse-as-library $(LIB_SRC) Tests/Run.swift -o $(TEST_BIN) \
 		-sdk "$(SDK)" -target "$(TARGET)" \
-		-framework SwiftUI -framework AppKit -framework UserNotifications
+		-framework SwiftUI -framework AppKit -framework UserNotifications -framework Network
 	$(TEST_BIN)

@@ -64,6 +64,7 @@ struct Tunnel: Codable, Identifiable {
     var icon: String?
     var image: String?
     var enabled: Bool?
+    var alert: Bool?
 }
 
 struct Deployment: Codable, Identifiable {
@@ -78,6 +79,7 @@ struct Deployment: Codable, Identifiable {
     var icon: String?
     var image: String?
     var enabled: Bool?
+    var alert: Bool?
 }
 
 struct TunnelInfo: Sendable {
