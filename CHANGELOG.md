@@ -2,6 +2,16 @@
 
 Versions stay on **v0.1.x** (`always-bump-patch`). Do not merge release-please PRs automatically.
 
+## [0.1.2](https://github.com/duyet/tiny-status/compare/v0.1.1...v0.1.2) (2026-10-09)
+
+
+### Features
+
+* **alerts:** add config-driven smart notifications ([8c91015](https://github.com/duyet/tiny-status/commit/8c91015d6f97a673094c07f75bc6bd575c20ab5e))
+* **menubar:** add menu bar popover with tunnel start/stop ([57e0e6e](https://github.com/duyet/tiny-status/commit/57e0e6e434543b354c79a5de9794ee3a2212c709))
+* **tunnel:** add tunnel lifecycle states and New Tunnel sheet ([da077a5](https://github.com/duyet/tiny-status/commit/da077a5cb755fcf746d395662dfb88712ee4ab42))
+* **ui:** sidebar, list and inspector window with poll progress and animations ([170ffe0](https://github.com/duyet/tiny-status/commit/170ffe00bd4d4960e5d2f3add71208cfa55da9c9))
+
 ## [0.1.1](https://github.com/duyet/tiny-status/compare/v0.1.0...v0.1.1) (2026-09-08)
 
 
