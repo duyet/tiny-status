@@ -1,8 +1,12 @@
 # TinyStatus
 
+<p align="center">
+  <img src="docs/screenshots/icon.png" width="128" height="128" alt="TinyStatus icon">
+</p>
+
 Tiny local health-check app for macOS.
 
-Paste a domain, IP, `host:port`, Tailscale name, or JSON. TinyStatus infers the check kind and probes it.
+Paste a domain, IP, `host:port`, Tailscale name, or JSON. TinyStatus infers a check kind and probes it.
 
 - HTTP health (optional path discovery)
 - TCP ports (including SSH tunnels that listen on localhost)
@@ -10,9 +14,15 @@ Paste a domain, IP, `host:port`, Tailscale name, or JSON. TinyStatus infers the 
 - Tailscale hostnames
 - ICMP-less “ping” (TCP connect)
 
-Menu bar icon (green / red), a small window, sparkline, notifications. Settings include git backup of your config.
+Menu bar icon (green / red), a window with history ticks, row actions, and a footer for network / Tailscale / last poll. Settings include git backup of your config.
+
+![Main window](docs/screenshots/window.png)
+
+Sample rows use only generic hosts (`example.com`, `127.0.0.1`, `my-machine.tailnet.ts.net`).
 
 Requires **macOS 26+**. AppKit / Swift. Version **v0.1.x** (patch-only). See [CHANGELOG.md](CHANGELOG.md).
+
+**Docs:** [product](docs/product.md) · [usage](docs/usage.md) · [config](docs/config.md) · [CLI](docs/cli.md) · [internals](docs/internals.md)
 
 ## Install and run
 
@@ -88,6 +98,23 @@ then the site root (2xx), then a TCP connect to 443/80 (no ICMP). Override the l
 
 A TCP check is **up** if `host:port` accepts a connection. A command check is **up** if the process exits 0.
 
+Notifications fire when a check **fails** or recovers (macOS User Notifications). Global flags live under `"alerts"`; per-check `"alert": false` mutes that row.
+
+```json
+{
+  "alerts": {
+    "enabled": true,
+    "onDown": true,
+    "onRecover": true,
+    "cooldownSeconds": 300
+  },
+  "checks": [
+    { "id": "web", "title": "Web", "kind": "http", "url": "https://example.com/health" },
+    { "id": "noisy", "title": "Local toy", "kind": "tcp", "host": "127.0.0.1", "port": 9, "alert": false }
+  ]
+}
+```
+
 Set `"enabled": false` to keep a check in the list without probing it. Toggle from the table context menu, the menu bar, Settings, or `tiny-status disable <id>` / `enable <id>`.
 
 Appearance and grouping come from the check, not from the title:
@@ -95,7 +122,7 @@ Appearance and grouping come from the check, not from the title:
 | Field | Meaning |
 |-------|---------|
 | `icon` | SF Symbol (default `network` / `globe` / `terminal` by kind) |
-| `image` | Bundled name (`GitLab`) or a path (`{config}/logo.png`) for the menu bar and table |
+| `image` | Bundled name (`GitLab`) or a path (`{config}/logo.png`) for the menu bar and table. HTTP checks without `image` load the site favicon |
 | `tags` / `group` | Grouping. If omitted, tags are inferred from the title as a fallback |
 
 Do not rely on the app special-casing a product name.
@@ -137,7 +164,11 @@ Optional HTTP JSON: `status` (`healthy` / `degraded` / …), `version`, `checks:
 
 ### Smart import
 
-Paste any of these in the UI (planned / in progress):
+**TinyStatus → Import checks…** (`⌘I`), or `tiny-status add`.
+
+![Import checks](docs/screenshots/import.png)
+
+Paste any of these:
 
 | Paste | Inferred |
 |-------|----------|

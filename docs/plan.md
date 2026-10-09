@@ -52,6 +52,8 @@ TinyStatus started as “tunnels + deployments”. It is now a **local health-ch
 
 ## Done when
 
-- README matches the schema.
+- README and [docs/](README.md) match the schema.
 - Example JSON has only generic hosts.
 - App can probe HTTP, TCP (localhost + Tailscale), and a command.
+
+Phases 1–6 above are implemented. Phase 7 (plugins) is still out of scope. Details: [product.md](product.md), [usage.md](usage.md), [config.md](config.md), [cli.md](cli.md), [internals.md](internals.md).
