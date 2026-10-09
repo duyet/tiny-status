@@ -19,7 +19,15 @@ make run
 
 Optional: `ln -sf "$(pwd)/scripts/tiny-status" ~/.local/bin/tiny-status`.
 
-Releases: conventional commits on `main` open a **release-please** PR that bumps **0.1.x**, `CHANGELOG.md`, and `Info.plist`. Merge that PR by hand. Never `--auto`. GitHub Actions also attach `TinyStatus-<tag>.zip` when a tag is created.
+Releases: conventional commits on `main` open a **release-please** PR that bumps **0.1.x**, `CHANGELOG.md`, and `Info.plist`. Merge that PR by hand. Never `--auto`. On release, CI builds a universal (arm64 + x86_64) app and attaches `TinyStatus-<tag>.dmg`, `.zip` and `SHA256SUMS.txt`. Every CI run uploads the same files as a workflow artifact.
+
+| Command | Result |
+|---------|--------|
+| `make release` | Universal build, signed, `dist/*.dmg`, `dist/*.zip`, `SHA256SUMS.txt` |
+| `make dmg` / `make zip` | One package only |
+| `SIGN_ID="Developer ID Application: …" make release` | Real signing (default `-` = ad-hoc) |
+
+Optional repo secrets for Developer ID signing + notarization: `MACOS_CERT_P12` (base64 .p12), `MACOS_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`. Without them the release is ad-hoc signed: first launch needs right-click → Open.
 
 ## First launch
 
