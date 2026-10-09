@@ -167,27 +167,11 @@ struct Check: Codable, Identifiable, Sendable {
     /// Missing or true = probed. false = skip probe, still listed.
     var enabled: Bool?
     /// Missing or true = notify on fail/recover (still subject to global `alerts`). false = mute this check.
-    var alert: Bool?
+    /// An object overrides global `alerts` fields for this check.
+    var alert: AlertSetting?
 
     var isEnabled: Bool { enabled != false }
-    var wantsAlert: Bool { alert != false }
-
-    /// Whether to post a notification for this check's new state.
-    static func shouldAlert(
-        globalEnabled: Bool,
-        onDown: Bool,
-        onRecover: Bool,
-        checkAlert: Bool?,
-        enabled: Bool,
-        wasUp: Bool?,
-        isUp: Bool
-    ) -> String? {
-        guard globalEnabled, enabled, checkAlert != false else { return nil }
-        guard let wasUp else { return nil }
-        if wasUp, !isUp { return onDown ? "down" : nil }
-        if !wasUp, isUp { return onRecover ? "recover" : nil }
-        return nil
-    }
+    var wantsAlert: Bool { alert?.isOn ?? true }
 
     /// Config `actions[]`, plus legacy `start` / `stop` / `open` if no list is set.
     func resolvedActions() -> [CheckAction] {
@@ -210,7 +194,7 @@ struct Check: Codable, Identifiable, Sendable {
             id: t.id, title: t.title, kind: .tcp,
             host: t.probeHost ?? "127.0.0.1", port: t.probePort,
             start: t.start, stop: t.stop, open: t.open,
-            tags: t.tags, group: t.group, icon: t.icon, image: t.image, enabled: t.enabled, alert: t.alert
+            tags: t.tags, group: t.group, icon: t.icon, image: t.image, enabled: t.enabled, alert: t.alert.map(AlertSetting.flag)
         )
     }
 
@@ -218,7 +202,7 @@ struct Check: Codable, Identifiable, Sendable {
         Check(
             id: d.id, title: d.title, kind: .http,
             url: d.healthUrl, k8s: d.k8s, k8sLive: d.k8sLive, openUrl: d.openUrl,
-            tags: d.tags, group: d.group, icon: d.icon, image: d.image, enabled: d.enabled, alert: d.alert
+            tags: d.tags, group: d.group, icon: d.icon, image: d.image, enabled: d.enabled, alert: d.alert.map(AlertSetting.flag)
         )
     }
 }

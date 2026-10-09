@@ -446,6 +446,7 @@ struct InspectorView: View {
                         row("Process", t?.process.map { p in t?.pid.map { "\(p) (\($0))" } ?? p } ?? "—")
                     }
                     if let v = d?.liveVersion, v != "—", v != "…" { row("Version", v) }
+                    row("Alerts", AlertCenter.shared.statusText(c, global: store.alertsConfig))
                 }
                 .font(.callout)
             }

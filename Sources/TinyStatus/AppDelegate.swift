@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Self.instance = self
+        AlertCenter.shared.start()
         buildMenu()
         setupStatusItem()
         menuBar = MenuBarController()

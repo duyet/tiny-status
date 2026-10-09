@@ -38,74 +38,91 @@ enum TinyStatusTests {
         expect(Check(id: "a", title: "A", kind: .http).isEnabled, "enabled by default")
         expect(Check(id: "a", title: "A", kind: .http).wantsAlert, "alert by default")
         var mute = Check(id: "a", title: "A", kind: .http)
-        mute.alert = false
+        mute.alert = .flag(false)
         expect(!mute.wantsAlert, "alert false")
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: true, isUp: false
-            ) == "down",
-            "healthy to down alerts"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: false, enabled: true, wasUp: true, isUp: false
-            ) == nil,
-            "per-check alert false mutes fail"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: false, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: true, isUp: false
-            ) == nil,
-            "global alerts off"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: false, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: true, isUp: false
-            ) == nil,
-            "onDown false skips fail"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: false, isUp: true
-            ) == "recover",
-            "down to up recovers"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: nil, isUp: false
-            ) == nil,
-            "unknown previous skips"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: false,
-                checkAlert: nil, enabled: true, wasUp: false, isUp: true
-            ) == nil,
-            "onRecover false skips recover"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: true, wasUp: true, isUp: true
-            ) == nil,
-            "still up does not alert"
-        )
-        expect(
-            Check.shouldAlert(
-                globalEnabled: true, onDown: true, onRecover: true,
-                checkAlert: nil, enabled: false, wasUp: true, isUp: false
-            ) == nil,
-            "disabled check does not alert"
-        )
+        mute.alert = .rule(Alerts(after: 5))
+        expect(mute.wantsAlert, "alert object keeps alerts on")
         var off = Check(id: "a", title: "A", kind: .http)
         off.enabled = false
         expect(!off.isEnabled, "enabled false")
+
+        // Alerts: debounce flaps, alert once per outage, recover only after a sent alert.
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let rule = AlertRule.resolve(nil, nil)
+        expect(rule == AlertRule(), "alert defaults: on, after 2, recover, no repeat, sound")
+        var st = AlertState()
+        var ev: AlertEvent?
+        (st, ev) = AlertLogic.step(st, down: true, rule: rule, now: t0)
+        expect(ev == nil, "one failed poll is a flap, no alert")
+        (st, ev) = AlertLogic.step(st, down: false, rule: rule, now: t0)
+        expect(ev == nil && st == AlertState(), "flap recovery is silent and resets")
+        (st, _) = AlertLogic.step(st, down: true, rule: rule, now: t0)
+        (st, ev) = AlertLogic.step(st, down: true, rule: rule, now: t0)
+        expect(ev == .down, "after 2 fails alerts down")
+        (st, ev) = AlertLogic.step(st, down: true, rule: rule, now: t0.addingTimeInterval(9999))
+        expect(ev == nil, "repeat 0 never re-alerts")
+        (st, ev) = AlertLogic.step(st, down: false, rule: rule, now: t0)
+        expect(ev == .recovered, "recovers after a sent down alert")
+
+        var rep = rule
+        rep.repeat = 1800
+        st = AlertState(fails: 2, alerted: true, lastAlertAt: t0)
+        (st, ev) = AlertLogic.step(st, down: true, rule: rep, now: t0.addingTimeInterval(600))
+        expect(ev == nil, "no repeat before window")
+        (st, ev) = AlertLogic.step(st, down: true, rule: rep, now: t0.addingTimeInterval(1800))
+        expect(ev == .down && st.lastAlertAt == t0.addingTimeInterval(1800), "repeat after window")
+
+        var noRecover = rule
+        noRecover.recover = false
+        expect(AlertLogic.step(st, down: false, rule: noRecover, now: t0).1 == nil, "recover false is silent")
+
+        (st, ev) = AlertLogic.step(AlertState(), down: true, rule: rule, now: t0, baseline: true)
+        expect(ev == nil && !st.alerted, "first poll after launch never alerts")
+        expect(AlertLogic.step(st, down: false, rule: rule, now: t0).1 == nil, "no recovery for an unsent baseline alert")
+        (st, ev) = AlertLogic.step(st, down: true, rule: rule, now: t0)
+        expect(ev == .down, "down at launch alerts once debounce is met")
+
+        var ruleOff = rule
+        ruleOff.enabled = false
+        expect(AlertLogic.step(AlertState(fails: 5), down: true, rule: ruleOff, now: t0).1 == nil, "disabled never alerts")
+
+        let quiet = QuietHours("22:00-08:00")
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        let at = { (h: Int, m: Int) in cal.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: h, minute: m))! }
+        expect(quiet?.contains(at(23, 0), calendar: cal) == true, "quiet wraps midnight (late)")
+        expect(quiet?.contains(at(7, 59), calendar: cal) == true, "quiet wraps midnight (early)")
+        expect(quiet?.contains(at(8, 0), calendar: cal) == false, "quiet end is exclusive")
+        expect(QuietHours("12:00-13:00")?.contains(at(12, 30), calendar: cal) == true, "quiet same-day window")
+        expect(QuietHours("25:00-08:00") == nil && QuietHours("nope") == nil, "bad quiet rejected")
+        var q = rule
+        q.quiet = quiet
+        expect(!q.audible(at: at(23, 0), calendar: cal), "quiet hours mute sound")
+        expect(q.audible(at: at(12, 0), calendar: cal), "sound outside quiet hours")
+
+        let ev3: [(id: String, title: String, event: AlertEvent, sound: Bool, tunnel: Bool)] = [
+            ("a", "A", .down, true, false), ("b", "B", .down, false, false), ("c", "C", .down, false, false),
+            ("d", "D", .recovered, false, false),
+        ]
+        let grouped = AlertLogic.notes(ev3)
+        expect(grouped.count == 2 && grouped[0].title == "3 checks down" && grouped[0].body == "A, B, C", "3 downs group into one")
+        expect(grouped[0].sound, "group plays sound if any member would")
+        expect(grouped[1].body == "Recovered", "recoveries stay separate")
+        let two = AlertLogic.notes(Array(ev3.prefix(2)))
+        expect(two.map(\.id) == ["a", "b"] && two[0].thread == "a", "2 downs notify per check")
+        expect(AlertLogic.notes([("t", "T", .down, true, true)])[0].category == AlertCenter.tunnelCategory, "tunnel category")
+
+        let global = try? JSONDecoder().decode(
+            Alerts.self, from: Data(#"{"after":3,"repeat":600,"quiet":"22:00-08:00","sound":false}"#.utf8)
+        )
+        let per = try? JSONDecoder().decode(Check.self, from: Data(#"{"id":"x","title":"X","kind":"tcp","alert":{"after":5,"repeat":0}}"#.utf8))
+        let merged = AlertRule.resolve(global, per?.alert)
+        expect(merged.after == 5 && merged.repeat == 0 && !merged.sound && merged.quiet != nil, "per-check object merges over global")
+        let flagOff = try? JSONDecoder().decode(Check.self, from: Data(#"{"id":"x","title":"X","kind":"tcp","alert":false}"#.utf8))
+        expect(flagOff?.alert == .flag(false) && !AlertRule.resolve(global, flagOff?.alert).enabled, "alert false parses and mutes")
+        expect(!AlertRule.resolve(Alerts(enabled: false), per?.alert).enabled, "global enabled false is a master switch")
+        let encoded = (try? JSONEncoder().encode(flagOff?.alert)).flatMap { String(data: $0, encoding: .utf8) }
+        expect(encoded == "false", "alert false round-trips as bool")
 
         expect(TableDensity.rowSize(false) == .large, "relaxed uses large rows")
         expect(TableDensity.rowSize(true) == .small, "compact uses small rows")

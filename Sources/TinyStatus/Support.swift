@@ -1,23 +1,4 @@
 import Foundation
-import UserNotifications
-
-
-enum Notify {
-    static func request() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-    static func post(id: String, title: String, body: String) {
-        let c = UNMutableNotificationContent()
-        c.title = title
-        c.body = body
-        c.sound = .default
-        let req = UNNotificationRequest(
-            identifier: "net.duyet.tiny-status.\(id)", content: c, trigger: nil
-        )
-        UNUserNotificationCenter.current().add(req)
-    }
-}
 
 enum DiskCache {
     static var url: URL {

@@ -2,7 +2,6 @@ import AppKit
 import Combine
 import Foundation
 import SwiftUI
-import UserNotifications
 
 @MainActor
 final class Store: ObservableObject {
@@ -18,7 +17,10 @@ final class Store: ObservableObject {
     @Published var editOnDown = true
     @Published var editOnRecover = true
     @Published var editOnDrift = true
-    @Published var editCooldown: Double = 300
+    @Published var editAfter = 2
+    @Published var editRepeat: Double = 0
+    @Published var editQuiet = ""
+    @Published var editSound = true
     @Published var editBackupEnabled = true
     @Published var editBackupAuto = false
     @Published var editBackupRepo = ""
@@ -161,10 +163,10 @@ final class Store: ObservableObject {
     private var busy = Set<String>()
     private var timer: Timer?
     private var cfgStamp: Date?
-    private var lastAlert: [String: Date] = [:]
+
+    var alertsConfig: Alerts? { cfg.alerts }
 
     init() {
-        Notify.request()
         load()
         poll()
     }
@@ -265,14 +267,26 @@ final class Store: ObservableObject {
             for key in ["checks", "tunnels", "deployments"] {
                 guard var arr = root[key] as? [[String: Any]] else { continue }
                 for i in arr.indices where arr[i]["id"] as? String == id {
-                    arr[i]["alert"] = on
+                    if var rule = arr[i]["alert"] as? [String: Any] {
+                        rule["enabled"] = on
+                        arr[i]["alert"] = rule
+                    } else {
+                        arr[i]["alert"] = on
+                    }
                 }
                 root[key] = arr
             }
         }
         cfg.checks = cfg.checks?.map {
             var c = $0
-            if c.id == id { c.alert = on }
+            if c.id == id {
+                if case var .rule(a) = c.alert {
+                    a.enabled = on
+                    c.alert = .rule(a)
+                } else {
+                    c.alert = .flag(on)
+                }
+            }
             return c
         }
         cfg.tunnels = cfg.tunnels?.map {
@@ -285,6 +299,18 @@ final class Store: ObservableObject {
             if d.id == id { d.alert = on }
             return d
         }
+    }
+
+    /// Settings "Notifications" toggle: writes `alerts.enabled` right away.
+    func setAlertsEnabled(_ on: Bool) {
+        editAlertsEnabled = on
+        patchConfig { root in
+            var a = root["alerts"] as? [String: Any] ?? [:]
+            a["enabled"] = on
+            root["alerts"] = a
+        }
+        if cfg.alerts == nil { cfg.alerts = Alerts() }
+        cfg.alerts?.enabled = on
     }
 
     private func patchConfig(_ edit: (inout [String: Any]) -> Void) {
@@ -422,7 +448,6 @@ final class Store: ObservableObject {
 
     private func applyCache() {
         guard let snap = DiskCache.load() else { return }
-        lastAlert = snap.lastAlert
         lastChecked = snap.lastChecked
         tunnels = tunnels.map { r in
             var r = r
@@ -471,7 +496,6 @@ final class Store: ObservableObject {
     }
 
     private func apply(tunnels infos: [String: TunnelInfo], deploys: [String: DeployRow]) {
-        let prevT = Dictionary(uniqueKeysWithValues: self.tunnels.map { ($0.id, $0) })
         let tcp = allChecks().filter { $0.kind == .tcp }
         let httpish = allChecks().filter { $0.kind != .tcp }
         tunnels = tcp.map { t in
@@ -537,7 +561,7 @@ final class Store: ObservableObject {
             return row
         }
         lastChecked = Date()
-        alertDiffs(prevT: prevT, prevD: prevD)
+        alertDiffs(prevD: prevD)
         DiskCache.save(
             CacheFile(
                 tunnels: Dictionary(uniqueKeysWithValues: tunnels.map { ($0.id, $0.up) }),
@@ -548,71 +572,43 @@ final class Store: ObservableObject {
                         spark: $0.spark
                     ))
                 }),
-                lastAlert: lastAlert,
                 lastChecked: lastChecked
             )
         )
     }
 
-    private func alertDiffs(prevT: [String: TunnelRow], prevD: [String: DeployRow]) {
-        let a = cfg.alerts
-        guard a?.enabled ?? true else { return }
-        let onDown = a?.onDown ?? true
-        let onRecover = a?.onRecover ?? true
-        let onDrift = a?.onVersionDrift ?? true
-        let cool = a?.cooldownSeconds ?? 300
-        let checks = Dictionary(uniqueKeysWithValues: allChecks().map { ($0.id, $0) })
-        for t in tunnels {
-            let want = checks[t.id]?.alert
-            let old = prevT[t.id]
-            guard let old, !old.busy else { continue }
-            switch Check.shouldAlert(
-                globalEnabled: true, onDown: onDown, onRecover: onRecover,
-                checkAlert: want, enabled: t.enabled, wasUp: old.enabled ? old.up : nil, isUp: t.up
-            ) {
-            case "down": ping(t.id, t.title, "Failed", cool)
-            case "recover": ping(t.id, t.title, "Recovered", cool)
-            default: break
+    private func alertDiffs(prevD: [String: DeployRow]) {
+        let checks = allChecks()
+        var down: [String: Bool] = [:]
+        for t in tunnels where t.enabled && !t.busy {
+            // Lifecycle-managed tunnels alert on .failed; skip while starting or stopped by the user.
+            if let s = TunnelLifecycle.shared.states[t.id] {
+                guard case .connected = s else { continue }
             }
+            down[t.id] = !t.up
         }
+        for d in deploys where d.enabled && d.health != "…" {
+            down[d.id] = d.health != "healthy" && d.health != "degraded"
+        }
+        AlertCenter.shared.feed(down, checks: checks, global: cfg.alerts, online: LinkStatus.shared.net.online)
+        guard cfg.alerts?.enabled ?? true, cfg.alerts?.onVersionDrift ?? true else { return }
+        let rules = Dictionary(uniqueKeysWithValues: checks.map { ($0.id, $0.alert) })
         for d in deploys {
-            let want = checks[d.id]?.alert
-            let old = prevD[d.id]
-            if d.health == "…" { continue }
-            let wasKnown = old.map { $0.health != "…" } ?? false
-            let wasUp = wasKnown ? old?.up : nil
-            switch Check.shouldAlert(
-                globalEnabled: true, onDown: onDown, onRecover: onRecover,
-                checkAlert: want, enabled: d.enabled, wasUp: wasUp, isUp: d.up
-            ) {
-            case "down": ping(d.id, d.title, "Failed — \(d.health)", cool)
-            case "recover": ping(d.id, d.title, "Recovered", cool)
-            default: break
-            }
-            if onDrift {
-                let drift = d.k8sVersion != "—" && d.k8sLiveVersion != "—"
-                    && (d.k8sVersion != d.k8sLiveVersion || (d.liveVersion != "—" && d.liveVersion != d.k8sLiveVersion))
-                let wasDrift = old.map {
-                    $0.k8sVersion != "—" && $0.k8sLiveVersion != "—"
-                        && ($0.k8sVersion != $0.k8sLiveVersion
-                            || ($0.liveVersion != "—" && $0.liveVersion != $0.k8sLiveVersion))
-                } ?? false
-                if drift, !wasDrift {
-                    ping(
-                        d.id + ".drift",
-                        d.title,
-                        "Version drift  k8s \(d.k8sVersion)  live \(d.k8sLiveVersion)  app \(d.liveVersion)",
-                        cool
-                    )
-                }
+            let rule = AlertRule.resolve(cfg.alerts, rules[d.id] ?? nil)
+            guard rule.enabled, let old = prevD[d.id] else { continue }
+            if Self.drift(d), !Self.drift(old) {
+                AlertCenter.shared.post(AlertNote(
+                    id: d.id + ".drift", title: d.title,
+                    body: "Version drift  k8s \(d.k8sVersion)  live \(d.k8sLiveVersion)  app \(d.liveVersion)",
+                    thread: d.id, category: AlertCenter.checkCategory, check: d.id, sound: rule.audible(at: Date())
+                ))
             }
         }
     }
 
-    private func ping(_ id: String, _ title: String, _ body: String, _ cool: Double) {
-        if let last = lastAlert[id], Date().timeIntervalSince(last) < cool { return }
-        lastAlert[id] = Date()
-        Notify.post(id: id, title: title, body: body)
+    private static func drift(_ d: DeployRow) -> Bool {
+        d.k8sVersion != "—" && d.k8sLiveVersion != "—"
+            && (d.k8sVersion != d.k8sLiveVersion || (d.liveVersion != "—" && d.liveVersion != d.k8sLiveVersion))
     }
 
     func runTunnel(_ id: String, kind: TunnelAction) {
@@ -674,9 +670,12 @@ final class Store: ObservableObject {
         editDensity = c.density ?? UserDefaults.standard.string(forKey: "TinyStatus.density") ?? "regular"
         editAlertsEnabled = c.alerts?.enabled ?? true
         editOnDown = c.alerts?.onDown ?? true
-        editOnRecover = c.alerts?.onRecover ?? true
+        editOnRecover = c.alerts?.recover ?? true
         editOnDrift = c.alerts?.onVersionDrift ?? true
-        editCooldown = c.alerts?.cooldownSeconds ?? 300
+        editAfter = c.alerts?.after ?? 2
+        editRepeat = c.alerts?.repeat ?? 0
+        editQuiet = c.alerts?.quiet ?? ""
+        editSound = c.alerts?.sound ?? true
         editBackupEnabled = c.backup?.enabled ?? true
         editBackupAuto = c.backup?.autoOnSave ?? false
         editBackupRepo = c.backup?.repo ?? "{home}/.config/tiny-status/git-backup"
@@ -708,13 +707,17 @@ final class Store: ObservableObject {
             root["pollSeconds"] = editPollSeconds
             root["groupBy"] = editGroupBy
             root["density"] = editDensity
-            root["alerts"] = [
+            var alerts: [String: Any] = [
                 "enabled": editAlertsEnabled,
                 "onDown": editOnDown,
-                "onRecover": editOnRecover,
+                "recover": editOnRecover,
                 "onVersionDrift": editOnDrift,
-                "cooldownSeconds": editCooldown,
+                "after": editAfter,
+                "repeat": editRepeat,
+                "sound": editSound,
             ]
+            if !editQuiet.isEmpty { alerts["quiet"] = editQuiet }
+            root["alerts"] = alerts
             root["backup"] = [
                 "enabled": editBackupEnabled,
                 "autoOnSave": editBackupAuto,

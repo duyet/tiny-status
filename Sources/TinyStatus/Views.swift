@@ -403,6 +403,13 @@ struct ConfigWindow: View {
             Section("Menu bar") {
                 Toggle("Show in menu bar", isOn: $store.showMenuBar)
             }
+            Section("Notifications") {
+                Toggle("Notifications", isOn: Binding(
+                    get: { store.editAlertsEnabled },
+                    set: { store.setAlertsEnabled($0) }
+                ))
+                Button("Send test notification") { AlertCenter.shared.sendTest() }
+            }
             Section("Table") {
                 Picker("Density", selection: $store.editDensity) {
                     Text("Relaxed").tag("regular")
@@ -480,10 +487,14 @@ struct ConfigWindow: View {
             }
             .disabled(!store.editAlertsEnabled)
             Section {
-                TextField("Cooldown (seconds)", value: $store.editCooldown, format: .number)
+                TextField("Failed polls before alert", value: $store.editAfter, format: .number)
+                TextField("Repeat while down (seconds)", value: $store.editRepeat, format: .number)
+                TextField("Quiet hours", text: $store.editQuiet, prompt: Text("22:00-08:00"))
+                Toggle("Sound", isOn: $store.editSound)
             } footer: {
-                Text("Minimum time between notifications for the same check.")
+                Text("Repeat 0 = alert once per outage. Quiet hours deliver alerts without sound.")
             }
+            .disabled(!store.editAlertsEnabled)
         }
         .formStyle(.grouped)
         .padding(.top, 8)

@@ -1,12 +1,46 @@
 import Foundation
 import SwiftUI
 
-struct Alerts: Codable {
+/// Global `alerts` and per-check `alert` object. Per-check fields override global ones.
+struct Alerts: Codable, Equatable, Sendable {
     var enabled: Bool?
     var onDown: Bool?
-    var onRecover: Bool?
     var onVersionDrift: Bool?
-    var cooldownSeconds: Double?
+    /// Consecutive failed polls before alerting.
+    var after: Int?
+    /// Notify on recovery (only if a down alert was sent).
+    var recover: Bool?
+    /// Seconds before re-alerting while still down. 0 = never.
+    var `repeat`: Double?
+    /// Local `HH:MM-HH:MM` window where alerts are delivered without sound.
+    var quiet: String?
+    var sound: Bool?
+}
+
+/// Per-check `alert`: `false` / `true`, or an `Alerts` object merged over the global one.
+enum AlertSetting: Codable, Equatable, Sendable {
+    case flag(Bool)
+    case rule(Alerts)
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let b = try? c.decode(Bool.self) { self = .flag(b) } else { self = .rule(try c.decode(Alerts.self)) }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case let .flag(b): try c.encode(b)
+        case let .rule(a): try c.encode(a)
+        }
+    }
+
+    var isOn: Bool {
+        switch self {
+        case let .flag(b): b
+        case let .rule(a): a.enabled != false
+        }
+    }
 }
 
 struct Backup: Codable {
@@ -45,7 +79,6 @@ struct CachedDeploy: Codable {
 struct CacheFile: Codable {
     var tunnels: [String: Bool]
     var deploys: [String: CachedDeploy]
-    var lastAlert: [String: Date]
     var lastChecked: Date?
 }
 
