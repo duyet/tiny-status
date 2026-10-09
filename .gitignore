@@ -6,3 +6,4 @@ TinyStatus.app/
 .DS_Store
 Resources/AppIcon.iconset/
 backup/
+dist/
