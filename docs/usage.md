@@ -117,7 +117,7 @@ Sidebar: **General · Checks · Alerts · Backup · JSON**. **Save** writes `tun
 
 **Checks** — list + inspector: Enabled, Alert when failed, identity, endpoint, discover paths, actions, optional k8s argv, last probe.
 
-**Alerts** — master switch; fail / recover / version drift; cooldown seconds.
+**Alerts** — master switch; fail / recover / version drift; failed polls before alert, repeat seconds, quiet hours, sound.
 
 **Backup** — git copy of the live file. Backup / Pull / Sync. On conflict: Keep local or Keep remote. Uses your machine’s git remotes. Do not commit secrets.
 
@@ -125,7 +125,9 @@ Sidebar: **General · Checks · Alerts · Backup · JSON**. **Save** writes `tun
 
 ## Notifications
 
-macOS User Notifications on fail, recover, and (if enabled) deploy vs pod version drift. First unknown state does not alert. Cooldown default 300 seconds. Per-check `"alert": false` mutes that row.
+macOS User Notifications on fail (after 2 failed polls by default), recover, and (if enabled) deploy vs pod version drift. The first poll after launch does not alert. 3+ checks down at once send one grouped note. Offline network sends one note and pauses counting. Tunnel start failures alert at once.
+
+Actions on a notification: **Open** (main window, check selected), **Restart** (tunnels), **Mute 1h** (in memory). Settings → General has a **Notifications** toggle (saves `alerts.enabled`) and **Send test notification**. The inspector shows `Alerts: On / Off / Muted until HH:MM`. Per-check `"alert": false` mutes that row. See [config.md](config.md#alerts).
 
 ## CLI
 

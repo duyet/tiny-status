@@ -24,7 +24,8 @@ Single-target Swift. `Makefile` compiles `Sources/TinyStatus/*.swift` into `Tiny
 | `Probe.swift` | HTTP / TCP / command probes |
 | `Discovery.swift` | Paste parse + `HealthDiscover` |
 | `CLI.swift` | Subcommands, JSON stdout |
-| `Support.swift` | `ConfigLoader`, `{vars}`, `DiskCache`, `Notify` |
+| `Support.swift` | `ConfigLoader`, `{vars}`, `DiskCache` |
+| `Alerts.swift` | `AlertRule` / `AlertLogic` (pure, tested) and `AlertCenter` (notifications, actions, mute) |
 | `Favicon.swift` | Favicon cache |
 | `GitBackup.swift` | Git copy; `Shell` argv runner |
 | `ImportController.swift` | Paste sheet |
@@ -87,7 +88,7 @@ CI (`.github/workflows/ci.yml`): `macos-latest`, `make test`, `make app`, CLI he
 - Examples must stay generic (`example.com`, `127.0.0.1`, `my-machine.tailnet.ts.net`).
 - `TCP.canConnect` sets `AI_NUMERICHOST` — numeric IPs only in that helper; do not “fix” DNS there without tests.
 - Discover vs explicit path: `/health` with `discover: false` does not walk other paths.
-- First poll with unknown previous state does not alert (`wasUp == nil`).
+- First poll after launch does not alert (baseline in `AlertLogic.step`).
 - Git backup editor defaults may use branch `master` while examples use `main` — Save writes the form.
 - Makefile tests must not compile `App.swift` (two `@main`).
 - Semantic commits if asked. Do not commit unless asked.

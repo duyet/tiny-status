@@ -57,7 +57,7 @@ All optional except that you need some checks to probe.
 | `groups` | Group header order | — |
 | `order` | Check id order | — |
 | `discoverPaths` | Global HTTP discovery list | built-in list below |
-| `alerts` | Notifications | enabled, 300s cooldown |
+| `alerts` | Notifications | on, after 2 failed polls |
 | `backup` | Git backup | off unless set |
 | `checks` | Canonical list | — |
 | `tunnels` | Legacy TCP | still loaded |
@@ -67,13 +67,24 @@ Ids are unique across the three arrays; `checks` wins if duplicated.
 
 ### `alerts`
 
-| Field | Default |
-|-------|---------|
-| `enabled` | `true` |
-| `onDown` | `true` |
-| `onRecover` | `true` |
-| `onVersionDrift` | `true` |
-| `cooldownSeconds` | `300` |
+```json
+"alerts": { "enabled": true, "after": 2, "recover": true, "repeat": 1800, "quiet": "22:00-08:00", "sound": true }
+```
+
+| Field | Meaning | Default |
+|-------|---------|---------|
+| `enabled` | Master switch (Settings → General → Notifications) | `true` |
+| `after` | Consecutive failed polls before alerting (debounces flaps) | `2` |
+| `recover` | Notify on recovery, only if a down alert was sent | `true` |
+| `repeat` | Seconds before re-alerting while still down. `0` = never | `0` |
+| `quiet` | Local `HH:MM-HH:MM` window; alerts arrive without sound. May wrap midnight | — |
+| `sound` | Play a sound | `true` |
+| `onDown` | Notify on down | `true` |
+| `onVersionDrift` | Notify when deploy and pod versions drift | `true` |
+
+Per check, `"alert": false` mutes it. `"alert": { "after": 5, "repeat": 0 }` merges over the global fields (global `enabled: false` still wins).
+
+Smart rules: the first poll after launch never alerts; while the network is offline, checks are not counted and one "Network offline" note is sent; 3+ checks down in the same poll send one grouped note; `degraded` counts as up; a tunnel start that ends `failed` alerts at once with exit code and stderr.
 
 ### `backup`
 
@@ -98,7 +109,7 @@ Required: `id`, `title`, `kind` (`http` \| `tcp` \| `command`).
 | `icon` | any | SF Symbol. Defaults: `network` / `globe` / `terminal` |
 | `image` | any | Bundle name (`GitLab`) or path (`{config}/logo.png`) |
 | `enabled` | any | Missing or `true` = probe. `false` = skip |
-| `alert` | any | Missing or `true` = notify. `false` = mute |
+| `alert` | any | Missing or `true` = notify. `false` = mute. Object = override `alerts` fields |
 | `k8s` / `k8sLive` | http | Optional argv; stdout tag after last `:` is version |
 
 ### HTTP discovery
@@ -163,7 +174,8 @@ Keep probes off the main thread in the GUI. Poll with `pollSeconds`.
 | Hidden column | Group |
 | Spark | last 40 polls |
 | `enabled` / `alert` | true |
-| Alert cooldown | 300s |
+| Alert after | 2 failed polls |
+| Alert repeat | never |
 | HTTP discover on origin | on |
 | TCP fallback after HTTP | on |
 | macOS | 26+ |

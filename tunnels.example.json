@@ -2,9 +2,11 @@
   "pollSeconds": 30,
   "alerts": {
     "enabled": true,
-    "onDown": true,
-    "onRecover": true,
-    "cooldownSeconds": 300
+    "after": 2,
+    "recover": true,
+    "repeat": 1800,
+    "quiet": "22:00-08:00",
+    "sound": true
   },
   "backup": {
     "enabled": true,
@@ -82,6 +84,14 @@
       "host": "127.0.0.1",
       "port": 9,
       "alert": false
+    },
+    {
+      "id": "flaky",
+      "title": "Flaky",
+      "kind": "tcp",
+      "host": "127.0.0.1",
+      "port": 8080,
+      "alert": { "after": 5, "repeat": 0 }
     },
     {
       "id": "cmd",

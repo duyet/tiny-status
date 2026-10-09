@@ -98,19 +98,22 @@ then the site root (2xx), then a TCP connect to 443/80 (no ICMP). Override the l
 
 A TCP check is **up** if `host:port` accepts a connection. A command check is **up** if the process exits 0.
 
-Notifications fire when a check **fails** or recovers (macOS User Notifications). Global flags live under `"alerts"`; per-check `"alert": false` mutes that row.
+Notifications fire when a check **fails** for `after` polls in a row, or recovers (macOS User Notifications). Global settings live under `"alerts"`; per-check `"alert": false` mutes that row, or `"alert": { "after": 5 }` overrides fields.
 
 ```json
 {
   "alerts": {
     "enabled": true,
-    "onDown": true,
-    "onRecover": true,
-    "cooldownSeconds": 300
+    "after": 2,
+    "recover": true,
+    "repeat": 1800,
+    "quiet": "22:00-08:00",
+    "sound": true
   },
   "checks": [
     { "id": "web", "title": "Web", "kind": "http", "url": "https://example.com/health" },
-    { "id": "noisy", "title": "Local toy", "kind": "tcp", "host": "127.0.0.1", "port": 9, "alert": false }
+    { "id": "noisy", "title": "Local toy", "kind": "tcp", "host": "127.0.0.1", "port": 9, "alert": false },
+    { "id": "flaky", "title": "Flaky", "kind": "tcp", "host": "127.0.0.1", "port": 8080, "alert": { "after": 5, "repeat": 0 } }
   ]
 }
 ```
