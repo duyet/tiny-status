@@ -25,9 +25,11 @@ jobs:
         run: TinyStatus.app/Contents/MacOS/TinyStatus help
       - name: Example JSON
         run: python3 -c "import json,pathlib; json.loads(pathlib.Path('tunnels.example.json').read_text()); json.loads(pathlib.Path('checks.example.json').read_text())"
-      - name: Upload TinyStatus.app
+      - name: Package DMG + zip (universal, ad-hoc signed)
+        run: make release
+      - name: Upload packages
         uses: actions/upload-artifact@v6
         with:
-          name: TinyStatus.app
-          path: TinyStatus.app
+          name: TinyStatus-${{ github.sha }}
+          path: dist/*
           if-no-files-found: error
